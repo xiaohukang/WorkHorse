@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var nextStartPromptAt: Date = .distantPast
     private var nextFocusReminderAt: Date?
     private var nextOffworkReminderAt: Date?
+    private var lastRenderedStatus: WorkHorseStatus?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if isRunningAsAppBundle {
@@ -76,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.button?.target = self
         item.button?.action = #selector(togglePopover)
         item.button?.toolTip = "牛马时光 WorkHorse"
-        updateStatusItem()
+        updateStatusItem(force: true)
     }
 
     private func configurePopover() {
@@ -107,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureStoreObservation() {
         cancellable = store.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async {
-                self?.updateStatusItem()
+                self?.updateStatusItem(force: true)
             }
         }
     }
@@ -126,8 +127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         maybeShowOffworkReminder()
     }
 
-    private func updateStatusItem() {
+    private func updateStatusItem(force: Bool = false) {
         let status = store.status
+        guard force || status != lastRenderedStatus else { return }
+        lastRenderedStatus = status
+
         let image = NSImage(systemSymbolName: status.symbolName, accessibilityDescription: "牛马时光")
         image?.isTemplate = true
         statusItem?.button?.image = image
@@ -315,14 +319,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showSettingsWindow(isOnboarding: Bool) {
         popover.performClose(nil)
-        settingsWindow?.makeKeyAndOrderFront(nil)
-        if settingsWindow != nil { return }
+        if let settingsWindow {
+            presentWindow(settingsWindow)
+            return
+        }
 
         let window = makeWindow(
             key: "settings",
             title: "牛马时光设置",
-            size: NSSize(width: 560, height: 620),
-            level: .normal,
+            size: NSSize(width: 600, height: 740),
+            level: .floating,
             rootView: SettingsView(
                 settings: store.settings,
                 isOnboarding: isOnboarding,
@@ -345,14 +351,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showReportWindow() {
         popover.performClose(nil)
-        reportWindow?.makeKeyAndOrderFront(nil)
-        if reportWindow != nil { return }
+        if let reportWindow {
+            presentWindow(reportWindow)
+            return
+        }
 
         let window = makeWindow(
             key: "report",
             title: "今日工作报告",
-            size: NSSize(width: 720, height: 560),
-            level: .normal,
+            size: NSSize(width: 720, height: 600),
+            level: .floating,
             rootView: ReportView(
                 store: store,
                 onClose: { [weak self] in
@@ -379,7 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) -> NSWindow {
         let window = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .closable, .fullSizeContentView],
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
@@ -391,12 +399,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = .clear
         window.hasShadow = true
         window.level = level
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: rootView)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        centerWindow(window)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         return window
+    }
+
+    private func presentWindow(_ window: NSWindow) {
+        NSApp.activate(ignoringOtherApps: true)
+        centerWindow(window)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+
+    private func centerWindow(_ window: NSWindow) {
+        guard let screen = statusItem?.button?.window?.screen ?? NSApp.keyWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first else {
+            window.center()
+            return
+        }
+
+        let visibleFrame = screen.visibleFrame
+        let windowFrame = window.frame
+        let origin = NSPoint(
+            x: visibleFrame.midX - windowFrame.width / 2,
+            y: visibleFrame.midY - windowFrame.height / 2
+        )
+        window.setFrameOrigin(NSPoint(x: floor(origin.x), y: floor(origin.y)))
     }
 
     private func closeWindow(key: String) {

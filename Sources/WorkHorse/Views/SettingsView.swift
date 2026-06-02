@@ -49,7 +49,7 @@ struct SettingsView: View {
             }
             .padding(28)
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 600, height: 740)
         .liquidPanel()
     }
 

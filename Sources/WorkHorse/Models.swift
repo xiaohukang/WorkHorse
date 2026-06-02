@@ -121,7 +121,7 @@ struct DailyLog: Codable, Equatable {
     }
 }
 
-enum WorkHorseStatus {
+enum WorkHorseStatus: Equatable {
     case idle
     case running
     case waiting

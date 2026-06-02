@@ -5,28 +5,30 @@ struct ReportView: View {
     let onClose: () -> Void
 
     var body: some View {
-        ZStack(alignment: .top) {
-            WorkHorseWindowBackground()
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            ZStack(alignment: .top) {
+                WorkHorseWindowBackground()
 
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                overview
-                content
-                footer
-            }
-            .padding(24)
+                VStack(alignment: .leading, spacing: 18) {
+                    header(at: context.date)
+                    overview(at: context.date)
+                    content(at: context.date)
+                    footer
+                }
+                .padding(24)
 
-            if let toast = store.toast {
-                ToastBadge(message: toast)
-                    .padding(.top, 16)
-                    .transition(.opacity)
+                if let toast = store.toast {
+                    ToastBadge(message: toast)
+                        .padding(.top, 16)
+                        .transition(.opacity)
+                }
             }
+            .frame(width: 720, height: 600)
+            .liquidPanel()
         }
-        .frame(width: 720, height: 560)
-        .liquidPanel()
     }
 
-    private var header: some View {
+    private func header(at referenceDate: Date) -> some View {
         HStack(spacing: 12) {
             LogoMark(size: 46)
             VStack(alignment: .leading, spacing: 3) {
@@ -35,7 +37,7 @@ struct ReportView: View {
                     .foregroundColor(.whTitle)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(WorkHorseFormatters.displayDayAndWeekday(for: store.now))
+                Text(WorkHorseFormatters.displayDayAndWeekday(for: referenceDate))
                     .font(.system(size: 13))
                     .foregroundColor(.whMuted)
                     .lineLimit(2)
@@ -51,29 +53,29 @@ struct ReportView: View {
         }
     }
 
-    private var overview: some View {
+    private func overview(at referenceDate: Date) -> some View {
         HStack(spacing: 12) {
-            reportMetric(title: "总工作时长", value: WorkHorseFormatters.durationString(seconds: store.todayTotalSeconds), icon: "timer")
-            reportMetric(title: "任务数量", value: "\(store.reportTasks.count)个", icon: "list.bullet")
+            reportMetric(title: "总工作时长", value: WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)), icon: "timer")
+            reportMetric(title: "任务数量", value: "\(store.reportTasks(at: referenceDate).count)个", icon: "list.bullet")
             reportMetric(title: "开始时间", value: WorkHorseFormatters.clockTime(store.today.clockInTime), icon: "arrow.up.right.circle")
             reportMetric(title: "结束时间", value: WorkHorseFormatters.clockTime(store.today.clockOutTime), icon: "checkmark.circle")
         }
     }
 
-    private var content: some View {
+    private func content(at referenceDate: Date) -> some View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("任务明细")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.whTitle)
 
-                if store.reportTasks.isEmpty {
+                if store.reportTasks(at: referenceDate).isEmpty {
                     emptyState
                 } else {
                     ScrollView {
                         VStack(spacing: 8) {
-                            ForEach(store.reportTasks) { task in
-                                taskRow(task)
+                            ForEach(store.reportTasks(at: referenceDate)) { task in
+                                taskRow(task, at: referenceDate)
                             }
                         }
                     }
@@ -87,9 +89,9 @@ struct ReportView: View {
                 Text("专注时长分布")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.whTitle)
-                DonutChart(tasks: store.reportTasks, store: store)
+                DonutChart(tasks: store.reportTasks(at: referenceDate), store: store, referenceDate: referenceDate)
                     .frame(height: 210)
-                legend
+                legend(at: referenceDate)
             }
             .padding(16)
             .frame(width: 240)
@@ -142,10 +144,10 @@ struct ReportView: View {
         .background(Color.white.opacity(0.30), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func taskRow(_ task: WorkTask) -> some View {
+    private func taskRow(_ task: WorkTask, at referenceDate: Date) -> some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(chartColor(for: task))
+                .fill(chartColor(for: task, at: referenceDate))
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 3) {
                 Text(task.title)
@@ -157,7 +159,7 @@ struct ReportView: View {
                     .foregroundColor(.whMuted)
             }
             Spacer()
-            Text(WorkHorseFormatters.durationString(seconds: store.duration(for: task)))
+            Text(WorkHorseFormatters.durationString(seconds: store.duration(for: task, at: referenceDate)))
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.whBody)
                 .lineLimit(1)
@@ -178,12 +180,12 @@ struct ReportView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var legend: some View {
+    private func legend(at referenceDate: Date) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(store.reportTasks.prefix(5).enumerated()), id: \.element.id) { _, task in
+            ForEach(Array(store.reportTasks(at: referenceDate).prefix(5).enumerated()), id: \.element.id) { _, task in
                 HStack(spacing: 7) {
                     Circle()
-                        .fill(chartColor(for: task))
+                        .fill(chartColor(for: task, at: referenceDate))
                         .frame(width: 7, height: 7)
                     Text(task.title)
                         .font(.system(size: 11))
@@ -195,9 +197,9 @@ struct ReportView: View {
         }
     }
 
-    private func chartColor(for task: WorkTask) -> Color {
+    private func chartColor(for task: WorkTask, at referenceDate: Date) -> Color {
         let colors: [Color] = [.whBlue, .whSky, .green, .orange, .pink, .purple, .teal]
-        guard let index = store.reportTasks.firstIndex(where: { $0.id == task.id }) else { return .whBlue }
+        guard let index = store.reportTasks(at: referenceDate).firstIndex(where: { $0.id == task.id }) else { return .whBlue }
         return colors[index % colors.count]
     }
 }
@@ -205,6 +207,7 @@ struct ReportView: View {
 private struct DonutChart: View {
     let tasks: [WorkTask]
     @ObservedObject var store: WorkHorseStore
+    let referenceDate: Date
 
     private let colors: [Color] = [.whBlue, .whSky, .green, .orange, .pink, .purple, .teal]
 
@@ -226,7 +229,7 @@ private struct DonutChart: View {
                 Text("总计")
                     .font(.system(size: 12))
                     .foregroundColor(.whMuted)
-                Text(WorkHorseFormatters.durationString(seconds: store.todayTotalSeconds))
+                Text(WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.whTitle)
                     .lineLimit(1)
@@ -240,18 +243,18 @@ private struct DonutChart: View {
     }
 
     private var total: Int {
-        max(0, tasks.reduce(0) { $0 + store.duration(for: $1) })
+        max(0, tasks.reduce(0) { $0 + store.duration(for: $1, at: referenceDate) })
     }
 
     private func startFraction(for index: Int) -> CGFloat {
         guard total > 0 else { return 0 }
-        let previous = tasks.prefix(index).reduce(0) { $0 + store.duration(for: $1) }
+        let previous = tasks.prefix(index).reduce(0) { $0 + store.duration(for: $1, at: referenceDate) }
         return CGFloat(Double(previous) / Double(total))
     }
 
     private func endFraction(for index: Int) -> CGFloat {
         guard total > 0 else { return 0 }
-        let through = tasks.prefix(index + 1).reduce(0) { $0 + store.duration(for: $1) }
+        let through = tasks.prefix(index + 1).reduce(0) { $0 + store.duration(for: $1, at: referenceDate) }
         return CGFloat(Double(through) / Double(total))
     }
 }

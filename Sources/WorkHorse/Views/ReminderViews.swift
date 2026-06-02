@@ -6,64 +6,66 @@ struct FocusReminderView: View {
     let onComplete: () -> Void
     let onContinue: () -> Void
 
-    private var elapsed: Int {
-        store.duration(for: task)
+    private func elapsed(at referenceDate: Date) -> Int {
+        store.duration(for: task, at: referenceDate)
     }
 
-    private var progress: Double {
+    private func progress(at referenceDate: Date) -> Double {
         let interval = max(1, store.settings.focusReminderInterval) * 60
-        return min(1, Double(elapsed) / Double(interval))
+        return min(1, Double(elapsed(at: referenceDate)) / Double(interval))
     }
 
     var body: some View {
-        ZStack {
-            WorkHorseWindowBackground()
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 12) {
-                    Image(systemName: "alarm")
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundColor(.whBlue)
-                        .frame(width: 46, height: 46)
-                        .background(.ultraThinMaterial, in: Circle())
-                    Text("专注 \(store.settings.focusReminderInterval) 分钟提醒")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.whTitle)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .layoutPriority(1)
-                    Spacer()
-                }
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            ZStack {
+                WorkHorseWindowBackground()
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "alarm")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundColor(.whBlue)
+                            .frame(width: 46, height: 46)
+                            .background(.ultraThinMaterial, in: Circle())
+                        Text("专注 \(store.settings.focusReminderInterval) 分钟提醒")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(.whTitle)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
+                        Spacer()
+                    }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("当前任务")
-                        .font(.system(size: 12))
-                        .foregroundColor(.whMuted)
-                    Text(task.title)
-                        .font(.system(size: 21, weight: .semibold))
-                        .foregroundColor(.whTitle)
-                        .lineLimit(2)
-                    Text(WorkHorseFormatters.timerString(seconds: elapsed))
-                        .font(.system(size: 46, weight: .medium, design: .rounded))
-                        .foregroundColor(.whTitle)
-                        .monospacedDigit()
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("当前任务")
+                            .font(.system(size: 12))
+                            .foregroundColor(.whMuted)
+                        Text(task.title)
+                            .font(.system(size: 21, weight: .semibold))
+                            .foregroundColor(.whTitle)
+                            .lineLimit(2)
+                        Text(WorkHorseFormatters.timerString(seconds: elapsed(at: context.date)))
+                            .font(.system(size: 46, weight: .medium, design: .rounded))
+                            .foregroundColor(.whTitle)
+                            .monospacedDigit()
 
-                    ProgressView(value: progress)
-                        .tint(.whBlue)
-                }
-                .padding(16)
-                .liquidCard()
+                        ProgressView(value: progress(at: context.date))
+                            .tint(.whBlue)
+                    }
+                    .padding(16)
+                    .liquidCard()
 
-                HStack(spacing: 12) {
-                    Button("完成", action: onComplete)
-                        .buttonStyle(SecondaryButtonStyle())
-                    Button("老牛还在干活", action: onContinue)
-                        .buttonStyle(PrimaryButtonStyle())
+                    HStack(spacing: 12) {
+                        Button("完成", action: onComplete)
+                            .buttonStyle(SecondaryButtonStyle())
+                        Button("老牛还在干活", action: onContinue)
+                            .buttonStyle(PrimaryButtonStyle())
+                    }
                 }
+                .padding(24)
             }
-            .padding(24)
+            .frame(width: 470, height: 330)
+            .liquidPanel()
         }
-        .frame(width: 470, height: 330)
-        .liquidPanel()
     }
 }
 

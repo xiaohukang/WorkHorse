@@ -45,13 +45,19 @@ struct MenuPanelView: View {
     }
 
     private var statusBlock: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            statusBlockContent(at: context.date)
+        }
+    }
+
+    private func statusBlockContent(at referenceDate: Date) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label(statusTitle, systemImage: statusSymbol)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.whMuted)
                 Spacer()
-                Text(WorkHorseFormatters.time.string(from: store.now))
+                Text(WorkHorseFormatters.time.string(from: referenceDate))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.whMuted)
             }
@@ -62,7 +68,7 @@ struct MenuPanelView: View {
                         .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(.whTitle)
                         .lineLimit(2)
-                    Text("已工作 \(WorkHorseFormatters.timerString(seconds: store.duration(for: task)))")
+                    Text("已工作 \(WorkHorseFormatters.timerString(seconds: store.duration(for: task, at: referenceDate)))")
                         .font(.system(size: 13))
                         .foregroundColor(.whMuted)
                 }
@@ -78,8 +84,8 @@ struct MenuPanelView: View {
             }
 
             HStack(spacing: 10) {
-                metric(title: "今日总计", value: WorkHorseFormatters.durationString(seconds: store.todayTotalSeconds))
-                metric(title: "任务数量", value: "\(store.reportTasks.count)个")
+                metric(title: "今日总计", value: WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)))
+                metric(title: "任务数量", value: "\(store.reportTasks(at: referenceDate).count)个")
             }
         }
         .padding(14)
