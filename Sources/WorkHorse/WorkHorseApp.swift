@@ -431,9 +431,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.identifier = NSUserInterfaceItemIdentifier(key)
         window.title = title
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = false
         window.isMovableByWindowBackground = true
-        window.backgroundColor = .clear
+        window.isOpaque = true
+        window.backgroundColor = NSColor(calibratedRed: 0.90, green: 0.95, blue: 1.0, alpha: 1.0)
         window.hasShadow = true
         window.level = level
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
