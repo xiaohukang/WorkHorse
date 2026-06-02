@@ -17,6 +17,9 @@ struct TaskPromptView: View {
                     Text(mode.title)
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(.whTitle)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     Spacer()
                 }
 

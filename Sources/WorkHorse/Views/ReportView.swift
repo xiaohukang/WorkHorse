@@ -33,10 +33,15 @@ struct ReportView: View {
                 Text("今日工作报告")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundColor(.whTitle)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(WorkHorseFormatters.displayDayAndWeekday(for: store.now))
                     .font(.system(size: 13))
                     .foregroundColor(.whMuted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .layoutPriority(1)
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")

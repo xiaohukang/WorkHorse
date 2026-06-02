@@ -60,10 +60,15 @@ struct SettingsView: View {
                 Text(isOnboarding ? "欢迎使用牛马时光" : "工作设置")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundColor(.whTitle)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(isOnboarding ? "先设置你的工作节奏" : "调整提醒、时间和工作日")
                     .font(.system(size: 13))
                     .foregroundColor(.whMuted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .layoutPriority(1)
             Spacer()
         }
     }
@@ -211,10 +216,15 @@ private struct ToggleRow: View {
                 Text(title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.whTitle)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundColor(.whMuted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .layoutPriority(1)
             Spacer()
             Toggle("", isOn: $isOn)
                 .labelsHidden()

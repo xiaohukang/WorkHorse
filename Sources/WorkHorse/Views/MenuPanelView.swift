@@ -27,10 +27,14 @@ struct MenuPanelView: View {
                 Text("牛马时光")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(.whTitle)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 Text("WorkHorse")
                     .font(.system(size: 12))
                     .foregroundColor(.whMuted)
+                    .lineLimit(1)
             }
+            .layoutPriority(1)
             Spacer()
             Button(action: actions.showSettings) {
                 Image(systemName: "gearshape")

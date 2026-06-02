@@ -28,6 +28,9 @@ struct FocusReminderView: View {
                     Text("专注 \(store.settings.focusReminderInterval) 分钟提醒")
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(.whTitle)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     Spacer()
                 }
 
@@ -82,11 +85,15 @@ struct OffworkReminderView: View {
                         Text("到点下班啦")
                             .font(.system(size: 23, weight: .semibold))
                             .foregroundColor(.whTitle)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                         Text("今天已经到下班时间了，是否已经下班？记得打卡。")
                             .font(.system(size: 13))
                             .foregroundColor(.whMuted)
+                            .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    .layoutPriority(1)
                     Spacer()
                 }
 
