@@ -5,12 +5,19 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT_DIR/.build/WorkHorse.app"
 EXECUTABLE="$ROOT_DIR/.build/release/WorkHorse"
 
+if [[ -z "${DEVELOPER_DIR:-}" && -d "/Library/Developer/CommandLineTools" ]]; then
+  export DEVELOPER_DIR="/Library/Developer/CommandLineTools"
+fi
+
 cd "$ROOT_DIR"
 swift build -c release
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/WorkHorse"
+cp "$ROOT_DIR/Sources/WorkHorse/Resources/statusbar-icon.svg" "$APP_DIR/Contents/Resources/statusbar-icon.svg"
+
+find "$ROOT_DIR/.build/release" -maxdepth 1 \( -name '*.resources' -o -name '*.bundle' \) -exec cp -R {} "$APP_DIR/Contents/Resources/" \;
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

@@ -35,6 +35,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var nextFocusReminderAt: Date?
     private var nextOffworkReminderAt: Date?
     private var lastRenderedStatus: WorkHorseStatus?
+    private var lastRenderedStatusBarTitle: String?
+
+    private lazy var statusBarIcon: NSImage = {
+        if let url = statusBarIconURL(),
+           let image = NSImage(contentsOf: url) {
+            image.size = NSSize(width: 18, height: 18)
+            image.isTemplate = true
+            return image
+        }
+
+        let fallback = NSImage(systemSymbolName: "clock", accessibilityDescription: "牛马时光") ?? NSImage()
+        fallback.size = NSSize(width: 18, height: 18)
+        fallback.isTemplate = true
+        return fallback
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if isRunningAsAppBundle {
@@ -72,11 +87,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
         item.button?.target = self
         item.button?.action = #selector(togglePopover)
         item.button?.toolTip = "牛马时光 WorkHorse"
+        item.button?.image = statusBarIcon
+        item.button?.imagePosition = .imageLeft
         updateStatusItem(force: true)
     }
 
@@ -129,23 +146,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func updateStatusItem(force: Bool = false) {
         let status = store.status
-        guard force || status != lastRenderedStatus else { return }
-        lastRenderedStatus = status
+        let title = statusBarTitle(for: status)
+        guard force || status != lastRenderedStatus || title != lastRenderedStatusBarTitle else { return }
 
-        let image = NSImage(systemSymbolName: status.symbolName, accessibilityDescription: "牛马时光")
-        image?.isTemplate = true
-        statusItem?.button?.image = image
+        lastRenderedStatus = status
+        lastRenderedStatusBarTitle = title
+
+        statusItem?.button?.image = statusBarIcon
+        statusItem?.button?.imagePosition = .imageLeft
+        statusItem?.button?.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
 
         switch status {
         case .idle:
-            statusItem?.button?.contentTintColor = .secondaryLabelColor
+            statusItem?.button?.contentTintColor = .labelColor
         case .running:
-            statusItem?.button?.contentTintColor = .systemBlue
+            statusItem?.button?.contentTintColor = .labelColor
         case .waiting:
             statusItem?.button?.contentTintColor = .systemOrange
         case .clockedOut:
-            statusItem?.button?.contentTintColor = .systemGreen
+            statusItem?.button?.contentTintColor = .labelColor
         }
+    }
+
+    private func statusBarTitle(for status: WorkHorseStatus) -> String {
+        guard status == .running, let task = store.currentTask else { return "" }
+        return " \(WorkHorseFormatters.timerString(seconds: store.duration(for: task, at: Date())))"
     }
 
     private func maybeShowStartPrompt() {
@@ -240,6 +271,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var isRunningAsAppBundle: Bool {
         Bundle.main.bundleURL.pathExtension == "app"
+    }
+
+    private func statusBarIconURL() -> URL? {
+        Bundle.main.url(forResource: "statusbar-icon", withExtension: "svg")
+            ?? Bundle.main.resourceURL?.appendingPathComponent("statusbar-icon.svg")
+            ?? Bundle.module.url(forResource: "statusbar-icon", withExtension: "svg")
     }
 
     private func showTaskPrompt(mode: TaskPromptMode) {

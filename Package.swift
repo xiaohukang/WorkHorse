@@ -13,7 +13,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "WorkHorse",
-            path: "Sources/WorkHorse"
+            path: "Sources/WorkHorse",
+            resources: [
+                .process("Resources")
+            ]
         )
     ],
     swiftLanguageVersions: [.v5]
