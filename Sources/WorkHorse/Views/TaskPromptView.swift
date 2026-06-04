@@ -11,9 +11,15 @@ struct TaskPromptView: View {
     var body: some View {
         ZStack {
             WorkHorseWindowBackground()
+                .ignoresSafeArea()
             VStack(alignment: .leading, spacing: 18) {
+                WindowControls(
+                    onClose: { closeCurrentWindow() },
+                    onMinimize: { NSApp.keyWindow?.miniaturize(nil) },
+                    onZoom: { NSApp.keyWindow?.zoom(nil) }
+                )
                 HStack(spacing: 12) {
-                    LogoMark(size: 46)
+                    AlarmHorseIcon(size: 46)
                     Text(mode.title)
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundColor(.whTitle)
@@ -48,7 +54,7 @@ struct TaskPromptView: View {
             }
             .padding(24)
         }
-        .frame(width: 460, height: 250)
+        .frame(width: 460, height: 280)
         .liquidPanel()
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {

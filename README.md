@@ -25,11 +25,141 @@
 swift run
 ```
 
-打包成 `.app`：
+本地打包成 universal `.app`、`.pkg`、`.dmg`、`.zip`：
 
 ```bash
 ./scripts/package_app.sh
 open .build/WorkHorse.app
+```
+
+默认会构建 `arm64 + x86_64` 双架构，方便 Apple Silicon 和 Intel Mac 都能运行。只想生成当前机器架构时可以设置：
+
+```bash
+ARCHS=native ./scripts/package_app.sh
+```
+
+未设置 Developer ID 时，脚本只会生成本地验证包；这种产物不适合直接发给同事。
+
+正式发布流程需要 Apple Developer Program 账号、Developer ID 证书和 `notarytool` 凭据。
+
+先在钥匙串保存一次公证凭据：
+
+```bash
+xcrun notarytool store-credentials "notarytool-password" \
+  --apple-id "你的 Apple ID" \
+  --team-id "TEAMID" \
+  --password "App 专用密码"
+```
+
+然后用 Developer ID 签名、公证、staple，并生成最终 `.pkg`、`.dmg` 和 `.zip`：
+
+```bash
+APP_SIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)' \
+INSTALLER_SIGN_IDENTITY='Developer ID Installer: Your Name (TEAMID)' \
+NOTARY_PROFILE='notarytool-password' \
+REQUIRE_NOTARIZATION=1 \
+./scripts/package_app.sh
+```
+
+`REQUIRE_NOTARIZATION=1` 会让脚本在缺少证书或公证凭据时提前失败，避免误发未公证产物。脚本会先对 `.app` 做 Developer ID 签名，再提交公证并 staple 到 `.app`；随后基于已 staple 的 app 生成最终 `.pkg`、`.dmg` 和 `.zip`。`.dmg` 和已签名 `.pkg` 也会提交公证并 staple，最后用 `codesign`、`lipo` 和 `spctl` 验证产物。
+
+可用签名证书可以这样检查：
+
+```bash
+security find-identity -v -p codesigning
+security find-identity -v -p basic
+```
+
+## 发布与分发
+
+仓库自带 GitHub Actions：在 `main` 上 `git tag v0.1.0 && git push --tags` 就会自动跑 `scripts/package_app.sh` 并把 `.zip` / `.dmg` / `.pkg` 上传成 GitHub Release。
+
+当前默认走 ad-hoc 签名（没有 Developer ID、不做公证）。Ad-hoc 产物的安装说明见下。
+
+### 同事安装（三种方式）
+
+**方式一：Homebrew Cask（推荐）**
+
+需要一个叫 `xiaohukang/homebrew-tap` 的"tap"仓库，里面放一个 `Casks/workhorse.rb`，示例见本文档最后《Homebrew Cask 配置》一节。准备好之后同事执行：
+
+```bash
+brew tap xiaohukang/tap
+brew install --cask workhorse
+```
+
+升级：
+
+```bash
+brew update && brew upgrade --cask workhorse
+```
+
+> Cask 走的是 GitHub Release 上的 `.zip` 文件。**Cask 文件里的 `version` 和 `sha256` 需要在每次发版后更新一次**（手动或脚本）。
+
+**方式二：直接下载 GitHub Release**
+
+进入 <https://github.com/xiaohukang/WorkHorse/releases> 下载最新的 `WorkHorse-x.y.z.zip`，解压后把 `WorkHorse.app` 拖进 `/Applications/`。
+
+**方式三：从源码编译**
+
+```bash
+git clone https://github.com/xiaohukang/WorkHorse.git
+cd WorkHorse
+swift build -c release
+.build/release/WorkHorse
+```
+
+### Ad-hoc 签名产物的"无法验证开发者"问题
+
+macOS Gatekeeper 默认会拦截未公证/未签名/只做 ad-hoc 签名的应用，弹窗显示"无法验证开发者"。同事首次安装后需要绕过：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WorkHorse.app
+```
+
+或者：Finder 里右键 `WorkHorse.app` → 打开 → 在新弹窗里再点一次"打开"。
+
+拿到 Apple Developer ID 之后，把 `package_app.sh` 改成传 `APP_SIGN_IDENTITY` / `INSTALLER_SIGN_IDENTITY` / `NOTARY_PROFILE` 即可走正式发布，同事就不再需要这一行。
+
+## Homebrew Cask 配置
+
+`xiaohukang/homebrew-tap` 仓库结构：
+
+```text
+.
+└── Casks/
+    └── workhorse.rb
+```
+
+`Casks/workhorse.rb` 的内容（**注意**：`version` 和 `sha256` 每次发版后需要更新 `sha256`）：
+
+```ruby
+cask "workhorse" do
+  version "0.1.0"
+  sha256 "把发布包 WorkHorse-0.1.0.zip 的 shasum -a 256 填到这里"
+
+  url "https://github.com/xiaohukang/WorkHorse/releases/download/v#{version}/WorkHorse-#{version}.zip"
+  name "牛马时光"
+  desc "macOS 菜单栏常驻工作记录与专注提醒应用"
+  homepage "https://github.com/xiaohukang/WorkHorse"
+
+  livecheck do
+    url :url
+    strategy :github_latest_release
+  end
+
+  app "WorkHorse.app"
+
+  zap trash: [
+    "~/Library/Application Support/WorkHorse",
+    "~/Library/Preferences/com.workhorse.menu.plist",
+  ]
+end
+```
+
+发版后更新 `sha256`：
+
+```bash
+shasum -a 256 .build/WorkHorse-0.1.0.zip
 ```
 
 ## 本地数据

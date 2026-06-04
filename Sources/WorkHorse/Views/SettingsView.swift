@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsView: View {
@@ -38,7 +39,9 @@ struct SettingsView: View {
     var body: some View {
         ZStack {
             WorkHorseWindowBackground()
+                .ignoresSafeArea()
             VStack(alignment: .leading, spacing: 22) {
+                windowHeader
                 header
                 workdaySection
                 workTimeSection
@@ -49,13 +52,22 @@ struct SettingsView: View {
             }
             .padding(28)
         }
-        .frame(width: 600, height: 740)
+        .frame(width: 600, height: 800)
         .liquidPanel()
+    }
+
+    private var windowHeader: some View {
+        HStack(spacing: 10) {
+            WindowControlButton(kind: .close, action: { closeCurrentWindow() })
+            WindowControlButton(kind: .minimize, action: { NSApp.keyWindow?.miniaturize(nil) })
+            WindowControlButton(kind: .zoom, action: { NSApp.keyWindow?.zoom(nil) })
+            Spacer()
+        }
     }
 
     private var header: some View {
         HStack(spacing: 14) {
-            LogoMark(size: 58)
+            AlarmHorseIcon(size: 58)
             VStack(alignment: .leading, spacing: 5) {
                 Text(isOnboarding ? "欢迎使用牛马时光" : "工作设置")
                     .font(.system(size: 24, weight: .semibold))
@@ -89,7 +101,7 @@ struct SettingsView: View {
                         Text(weekday.shortName)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(isSelected ? .white : .whBody)
-                            .frame(width: 56, height: 40)
+                            .frame(maxWidth: .infinity, minHeight: 40)
                             .background(
                                 isSelected
                                     ? AnyShapeStyle(LinearGradient(colors: [.whBlue, .whSky], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -98,8 +110,10 @@ struct SettingsView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                 }
             }
+            .frame(maxWidth: .infinity)
         }
         .padding(16)
         .liquidCard()

@@ -3,26 +3,36 @@ import SwiftUI
 struct MenuPanelView: View {
     @ObservedObject var store: WorkHorseStore
     let actions: WorkHorseActions
+    var onContentHeightChange: ((CGFloat) -> Void)?
 
     var body: some View {
-        ZStack(alignment: .top) {
-            WorkHorseWindowBackground()
-
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                Divider().opacity(0.45)
-                statusBlock
-                actionGrid
-                footer
-            }
-            .padding(18)
+        VStack(alignment: .leading, spacing: 16) {
+            header
+            Divider().opacity(0.45)
+            statusBlock
+            actionGrid
+            footer
         }
-        .frame(width: 340, height: 430)
+        .padding(18)
+        .frame(width: 340)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(WorkHorseWindowBackground())
+        .background(contentHeightReader)
+        .onPreferenceChange(MenuPanelHeightPreferenceKey.self) { height in
+            onContentHeightChange?(height)
+        }
+    }
+
+    private var contentHeightReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .preference(key: MenuPanelHeightPreferenceKey.self, value: proxy.size.height)
+        }
     }
 
     private var header: some View {
         HStack(spacing: 12) {
-            LogoMark(size: 48)
+            AlarmHorseIcon(size: 48)
             VStack(alignment: .leading, spacing: 3) {
                 Text("牛马时光")
                     .font(.system(size: 18, weight: .semibold))
@@ -51,45 +61,107 @@ struct MenuPanelView: View {
     }
 
     private func statusBlockContent(at referenceDate: Date) -> some View {
+        Group {
+            if let task = store.currentTask {
+                timerModule(task: task, seconds: store.duration(for: task, at: referenceDate))
+            } else {
+                idleStatusContent(at: referenceDate)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func timerModule(task: WorkTask, seconds: Int) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            Text(task.title)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.whTitle)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+
+            elapsedTimeRow(seconds: seconds)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color.whBlue.opacity(0.14),
+                    Color.whSky.opacity(0.10),
+                    Color.white.opacity(0.12)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.whBlue.opacity(0.30), lineWidth: 1)
+        )
+    }
+
+    private func idleStatusContent(at referenceDate: Date) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(statusTitle, systemImage: statusSymbol)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.whMuted)
+                    .foregroundColor(.whBlue)
                 Spacer()
                 Text(WorkHorseFormatters.time.string(from: referenceDate))
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.whBlue)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(store.isClockedOutToday ? "今日已下班" : "还没有开始计时")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.whTitle)
+                Text(store.isClockedOutToday ? "去看看今天的成果吧" : "开始一项任务后，我会帮你记住时间")
+                    .font(.system(size: 13))
                     .foregroundColor(.whMuted)
             }
-
-            if let task = store.currentTask {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(task.title)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.whTitle)
-                        .lineLimit(2)
-                    Text("已工作 \(WorkHorseFormatters.timerString(seconds: store.duration(for: task, at: referenceDate)))")
-                        .font(.system(size: 13))
-                        .foregroundColor(.whMuted)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(store.isClockedOutToday ? "今日已下班" : "还没有开始计时")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.whTitle)
-                    Text(store.isClockedOutToday ? "去看看今天的成果吧" : "开始一项任务后，我会帮你记住时间")
-                        .font(.system(size: 13))
-                        .foregroundColor(.whMuted)
-                }
-            }
-
-            HStack(spacing: 10) {
-                metric(title: "今日总计", value: WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)))
-                metric(title: "任务数量", value: "\(store.reportTasks(at: referenceDate).count)个")
-            }
         }
-        .padding(14)
-        .liquidCard()
+    }
+
+    private func elapsedTimeRow(seconds: Int) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(Color.whBlue.opacity(0.14))
+                Image(systemName: "timer")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.whBlue)
+            }
+            .frame(width: 32, height: 32)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("已工作")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.whMuted)
+                Text(WorkHorseFormatters.timerString(seconds: seconds))
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(.whTitle)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(Color.whBlue)
+                    .frame(width: 6, height: 6)
+                Text("计时中")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundColor(.whBlue)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.white.opacity(0.34), in: Capsule())
+        }
     }
 
     private var actionGrid: some View {
@@ -131,22 +203,6 @@ struct MenuPanelView: View {
         .padding(.top, 2)
     }
 
-    private func metric(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 11))
-                .foregroundColor(.whMuted)
-            Text(value)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.whTitle)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.white.opacity(0.26), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
     private var statusTitle: String {
         switch store.status {
         case .idle: return "待开始"
@@ -163,5 +219,13 @@ struct MenuPanelView: View {
         case .waiting: return "bell"
         case .clockedOut: return "checkmark.circle"
         }
+    }
+}
+
+private struct MenuPanelHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }

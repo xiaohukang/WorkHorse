@@ -8,6 +8,7 @@ struct ReportView: View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
             ZStack(alignment: .top) {
                 WorkHorseWindowBackground()
+                    .ignoresSafeArea()
 
                 VStack(alignment: .leading, spacing: 18) {
                     header(at: context.date)
@@ -23,33 +24,39 @@ struct ReportView: View {
                         .transition(.opacity)
                 }
             }
-            .frame(width: 720, height: 600)
+            .frame(width: 720, height: 660)
             .liquidPanel()
         }
     }
 
     private func header(at referenceDate: Date) -> some View {
-        HStack(spacing: 12) {
-            LogoMark(size: 46)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("今日工作报告")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundColor(.whTitle)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(WorkHorseFormatters.displayDayAndWeekday(for: referenceDate))
-                    .font(.system(size: 13))
-                    .foregroundColor(.whMuted)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                WindowControls(
+                    onClose: onClose,
+                    onMinimize: { NSApp.keyWindow?.miniaturize(nil) },
+                    onZoom: { NSApp.keyWindow?.zoom(nil) }
+                )
+                Spacer()
             }
-            .layoutPriority(1)
-            Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark")
+
+            HStack(spacing: 12) {
+                AlarmHorseIcon(size: 46)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("今日工作报告")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(.whTitle)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(WorkHorseFormatters.displayDayAndWeekday(for: referenceDate))
+                        .font(.system(size: 13))
+                        .foregroundColor(.whMuted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+                Spacer()
             }
-            .buttonStyle(IconCircleButtonStyle())
-            .help("关闭")
         }
     }
 
@@ -58,8 +65,28 @@ struct ReportView: View {
             reportMetric(title: "总工作时长", value: WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)), icon: "timer")
             reportMetric(title: "任务数量", value: "\(store.reportTasks(at: referenceDate).count)个", icon: "list.bullet")
             reportMetric(title: "开始时间", value: WorkHorseFormatters.clockTime(store.today.clockInTime), icon: "arrow.up.right.circle")
-            reportMetric(title: "结束时间", value: WorkHorseFormatters.clockTime(store.today.clockOutTime), icon: "checkmark.circle")
+            reportMetric(title: endTimeTitle(at: referenceDate), value: endTimeValue(at: referenceDate), icon: endTimeIcon)
         }
+    }
+
+    private func endTimeTitle(at referenceDate: Date) -> String {
+        store.isClockedOutToday ? "结束时间" : "距离下班"
+    }
+
+    private func endTimeValue(at referenceDate: Date) -> String {
+        if store.isClockedOutToday {
+            return WorkHorseFormatters.clockTime(store.today.clockOutTime)
+        }
+        let offworkDate = store.settings.date(on: referenceDate, from: store.settings.workEndTime)
+        let remaining = Int(offworkDate.timeIntervalSince(referenceDate))
+        if remaining <= 0 {
+            return "已到下班"
+        }
+        return WorkHorseFormatters.timerString(seconds: remaining)
+    }
+
+    private var endTimeIcon: String {
+        store.isClockedOutToday ? "checkmark.circle" : "hourglass"
     }
 
     private func content(at referenceDate: Date) -> some View {
