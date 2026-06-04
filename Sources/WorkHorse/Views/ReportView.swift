@@ -61,8 +61,12 @@ struct ReportView: View {
     }
 
     private func overview(at referenceDate: Date) -> some View {
-        HStack(spacing: 12) {
+        let overtime = WorkHorseFormatters.durationString(seconds: store.totalOvertimeSeconds(at: referenceDate))
+        return HStack(spacing: 12) {
             reportMetric(title: "总工作时长", value: WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)), icon: "timer")
+            if store.totalOvertimeSeconds(at: referenceDate) > 0 {
+                reportMetric(title: "加班时长", value: overtime, icon: "moon.zzz.fill", accent: .orange)
+            }
             reportMetric(title: "任务数量", value: "\(store.reportTasks(at: referenceDate).count)个", icon: "list.bullet")
             reportMetric(title: "开始时间", value: WorkHorseFormatters.clockTime(store.today.clockInTime), icon: "arrow.up.right.circle")
             reportMetric(title: endTimeTitle(at: referenceDate), value: endTimeValue(at: referenceDate), icon: endTimeIcon)
@@ -151,11 +155,11 @@ struct ReportView: View {
         }
     }
 
-    private func reportMetric(title: String, value: String, icon: String) -> some View {
+    private func reportMetric(title: String, value: String, icon: String, accent: Color = .whBlue) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .foregroundColor(.whBlue)
+                    .foregroundColor(accent)
                 Text(title)
                     .foregroundColor(.whMuted)
             }
@@ -172,16 +176,38 @@ struct ReportView: View {
     }
 
     private func taskRow(_ task: WorkTask, at referenceDate: Date) -> some View {
-        HStack(spacing: 10) {
+        let overtimeSeconds = store.overtimeSeconds(for: task, at: referenceDate)
+        return HStack(spacing: 10) {
             Circle()
                 .fill(chartColor(for: task, at: referenceDate))
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 3) {
-                Text(task.title)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.whTitle)
-                    .lineLimit(1)
-                Text("\(WorkHorseFormatters.clockTime(task.startTime)) - \(WorkHorseFormatters.clockTime(task.endTime))")
+                HStack(spacing: 6) {
+                    Text(task.title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.whTitle)
+                        .lineLimit(1)
+                    if !task.status.isFinished {
+                        Text(task.status == .running ? "进行中" : "已暂停")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(task.status == .running ? .whBlue : .whMuted)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                (task.status == .running ? Color.whBlue : Color.whMuted).opacity(0.14),
+                                in: Capsule()
+                            )
+                    }
+                    if overtimeSeconds > 0 {
+                        Text("加班 \(WorkHorseFormatters.durationString(seconds: overtimeSeconds))")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.14), in: Capsule())
+                    }
+                }
+                Text(timeRangeText(for: task))
                     .font(.system(size: 11))
                     .foregroundColor(.whMuted)
             }
@@ -193,6 +219,14 @@ struct ReportView: View {
         }
         .padding(10)
         .background(Color.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func timeRangeText(for task: WorkTask) -> String {
+        let start = WorkHorseFormatters.clockTime(task.startTime)
+        if let end = task.endTime {
+            return "\(start) - \(WorkHorseFormatters.clockTime(end))"
+        }
+        return "\(start) - 计时中"
     }
 
     private var emptyState: some View {

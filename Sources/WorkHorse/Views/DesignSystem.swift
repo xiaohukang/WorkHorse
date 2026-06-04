@@ -7,6 +7,9 @@ struct WorkHorseActions {
     var completeTask: () -> Void
     var showReport: () -> Void
     var quit: () -> Void
+    var resumeTask: (String) -> Void
+    var pauseCurrentTask: () -> Void
+    var completeTaskByID: (String) -> Void
 }
 
 enum TaskPromptMode {

@@ -125,7 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                 showTaskPrompt: { [weak self] in self?.showTaskPrompt(mode: .start) },
                 completeTask: { [weak self] in self?.completeTaskFromMenu() },
                 showReport: { [weak self] in self?.showReportWindow() },
-                quit: { NSApp.terminate(nil) }
+                quit: { NSApp.terminate(nil) },
+                resumeTask: { [weak self] id in self?.handleResumeTask(id: id) },
+                pauseCurrentTask: { [weak self] in self?.handlePauseCurrentTask() },
+                completeTaskByID: { [weak self] id in self?.handleCompleteTaskByID(id: id) }
             ),
             onContentHeightChange: { [weak self] height in
                 self?.updateMenuPopoverHeight(height)
@@ -325,6 +328,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         maybeShowOffworkReminder()
     }
 
+    private func handleResumeTask(id: String) {
+        guard store.resumeTask(id: id) else { return }
+        if let task = store.currentTask {
+            showToast("「\(task.title)」正在计时")
+        }
+        nextFocusReminderAt = Date().addingTimeInterval(TimeInterval(max(1, store.settings.focusReminderInterval) * 60))
+    }
+
+    private func handlePauseCurrentTask() {
+        guard store.pauseRunningTask() else { return }
+        showToast("当前任务已暂停")
+        nextFocusReminderAt = nil
+    }
+
+    private func handleCompleteTaskByID(id: String) {
+        guard let task = store.completeTask(id: id) else { return }
+        showToast("「\(task.title)」已完成")
+        nextFocusReminderAt = nil
+    }
+
     private func updateStatusItem(force: Bool = false) {
         let status = store.status
         let title = statusBarTitle(for: status)
@@ -398,6 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
               taskPromptWindow == nil,
               settingsWindow == nil,
               Date() >= nextStartPromptAt,
+              store.canStartNewTask,
               store.settings.isWithinWorkWindow(Date()),
               latestInputIdleSeconds() < 3 else {
             return
@@ -532,10 +556,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                 mode: mode,
                 onStart: { [weak self] title in
                     guard let self else { return }
-                    self.store.startTask(title: title)
-                    self.nextFocusReminderAt = Date().addingTimeInterval(TimeInterval(max(1, self.store.settings.focusReminderInterval) * 60))
-                    self.closeWindow(key: "taskPrompt")
-                    self.showToast("开始计时，可在状态栏查看时长")
+                    let started = self.store.startTask(title: title)
+                    if started {
+                        self.nextFocusReminderAt = Date().addingTimeInterval(TimeInterval(max(1, self.store.settings.focusReminderInterval) * 60))
+                        self.closeWindow(key: "taskPrompt")
+                        self.showToast("开始计时，可在状态栏查看时长")
+                    }
+                    // 启动失败时（如已达 10 个任务上限）保持弹窗打开，
+                    // Store 已通过 toast 给出原因。
                 },
                 onPostpone: { [weak self] in
                     self?.postponeStartPrompt()
@@ -676,6 +704,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
         guard promptsForTask,
               store.currentTask == nil,
+              store.canStartNewTask,
               store.today.clockOutTime == nil else {
             return
         }
@@ -685,6 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                   self.settingsWindow == nil,
                   self.taskPromptWindow == nil,
                   self.store.currentTask == nil,
+                  self.store.canStartNewTask,
                   self.store.today.clockOutTime == nil else {
                 return
             }

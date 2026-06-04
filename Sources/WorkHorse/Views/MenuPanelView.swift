@@ -60,45 +60,157 @@ struct MenuPanelView: View {
         }
     }
 
+    @ViewBuilder
     private func statusBlockContent(at referenceDate: Date) -> some View {
-        Group {
-            if let task = store.currentTask {
-                timerModule(task: task, seconds: store.duration(for: task, at: referenceDate))
-            } else {
-                idleStatusContent(at: referenceDate)
-            }
+        if store.activeTasks.isEmpty {
+            idleStatusContent(at: referenceDate)
+        } else {
+            activeTasksContent(at: referenceDate)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func timerModule(task: WorkTask, seconds: Int) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(task.title)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(.whTitle)
-                .lineLimit(2)
-                .minimumScaleFactor(0.85)
+    private func activeTasksContent(at referenceDate: Date) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label(statusTitle, systemImage: statusSymbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.whBlue)
+                Spacer()
+                Text(WorkHorseFormatters.time.string(from: referenceDate))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.whBlue)
+            }
 
-            elapsedTimeRow(seconds: seconds)
+            VStack(spacing: 8) {
+                ForEach(store.activeTasks) { task in
+                    taskCard(task: task, at: referenceDate)
+                }
+            }
         }
+    }
+
+    private func taskCard(task: WorkTask, at referenceDate: Date) -> some View {
+        let seconds = store.duration(for: task, at: referenceDate)
+        let overtimeSeconds = store.overtimeSeconds(for: task, at: referenceDate)
+        let isRunning = task.status == .running
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                statusIndicator(isRunning: isRunning)
+                Text(task.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.whTitle)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(isRunning ? "正在计时" : "已暂停")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.whMuted)
+                    Text(WorkHorseFormatters.timerString(seconds: seconds))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(.whTitle)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
+                taskControlButtons(task: task)
+            }
+
+            if overtimeSeconds > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("加班 \(WorkHorseFormatters.durationString(seconds: overtimeSeconds))")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(.orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.orange.opacity(0.14), in: Capsule())
+                .overlay(Capsule().stroke(Color.orange.opacity(0.30), lineWidth: 1))
+                .accessibilityLabel("已加班 \(WorkHorseFormatters.durationString(seconds: overtimeSeconds))")
+            }
+        }
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
         .background(
             LinearGradient(
-                colors: [
-                    Color.whBlue.opacity(0.14),
-                    Color.whSky.opacity(0.10),
-                    Color.white.opacity(0.12)
-                ],
+                colors: isRunning
+                    ? [
+                        Color.whBlue.opacity(0.14),
+                        Color.whSky.opacity(0.10),
+                        Color.white.opacity(0.12)
+                    ]
+                    : [
+                        Color.white.opacity(0.32),
+                        Color.white.opacity(0.18)
+                    ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.whBlue.opacity(0.30), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(
+                    isRunning ? Color.whBlue.opacity(0.30) : Color.white.opacity(0.55),
+                    lineWidth: 1
+                )
         )
+    }
+
+    private func statusIndicator(isRunning: Bool) -> some View {
+        ZStack {
+            Circle()
+                .fill(isRunning ? Color.whBlue.opacity(0.18) : Color.whMuted.opacity(0.18))
+            Image(systemName: isRunning ? "timer" : "pause.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isRunning ? .whBlue : .whMuted)
+        }
+        .frame(width: 24, height: 24)
+    }
+
+    @ViewBuilder
+    private func taskControlButtons(task: WorkTask) -> some View {
+        if task.status == .running {
+            HStack(spacing: 6) {
+                iconButton(systemName: "pause.fill", help: "暂停") {
+                    actions.pauseCurrentTask()
+                }
+                iconButton(systemName: "checkmark", help: "完成") {
+                    actions.completeTaskByID(task.id)
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                iconButton(systemName: "play.fill", help: "继续") {
+                    actions.resumeTask(task.id)
+                }
+                iconButton(systemName: "checkmark", help: "完成") {
+                    actions.completeTaskByID(task.id)
+                }
+            }
+        }
+    }
+
+    private func iconButton(systemName: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.whBlue)
+                .frame(width: 28, height: 28)
+                .background(Color.white.opacity(0.55), in: Circle())
+                .overlay(Circle().stroke(Color.whBlue.opacity(0.30), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func idleStatusContent(at referenceDate: Date) -> some View {
@@ -124,66 +236,27 @@ struct MenuPanelView: View {
         }
     }
 
-    private func elapsedTimeRow(seconds: Int) -> some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(Color.whBlue.opacity(0.14))
-                Image(systemName: "timer")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.whBlue)
-            }
-            .frame(width: 32, height: 32)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("已工作")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.whMuted)
-                Text(WorkHorseFormatters.timerString(seconds: seconds))
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(.whTitle)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
-            .layoutPriority(1)
-
-            Spacer(minLength: 8)
-
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(Color.whBlue)
-                    .frame(width: 6, height: 6)
-                Text("计时中")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .foregroundColor(.whBlue)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.white.opacity(0.34), in: Capsule())
-        }
-    }
-
     private var actionGrid: some View {
         VStack(spacing: 10) {
             Button(action: actions.showTaskPrompt) {
                 Label("开始新任务", systemImage: "plus.circle.fill")
             }
             .buttonStyle(PrimaryButtonStyle())
+            .disabled(!store.canStartNewTask)
+            .opacity(store.canStartNewTask ? 1 : 0.5)
 
-            HStack(spacing: 10) {
-                Button(action: actions.completeTask) {
-                    Label("完成当前", systemImage: "checkmark.circle")
-                }
-                .buttonStyle(SecondaryButtonStyle())
-                .disabled(store.currentTask == nil)
-                .opacity(store.currentTask == nil ? 0.45 : 1)
-
-                Button(action: actions.showReport) {
-                    Label("今日报告", systemImage: "chart.pie")
-                }
-                .buttonStyle(SecondaryButtonStyle())
+            if !store.canStartNewTask, !store.isClockedOutToday {
+                Text("最多同时追踪 \(WorkHorseStore.maxTrackedTasks) 个任务")
+                    .font(.system(size: 11))
+                    .foregroundColor(.whMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            Button(action: actions.showReport) {
+                Label("今日报告", systemImage: "chart.pie")
+            }
+            .buttonStyle(SecondaryButtonStyle())
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -205,7 +278,7 @@ struct MenuPanelView: View {
 
     private var statusTitle: String {
         switch store.status {
-        case .idle: return "待开始"
+        case .idle: return store.activeTasks.isEmpty ? "待开始" : "待开始新任务"
         case .running: return "正在计时"
         case .waiting: return "等待确认"
         case .clockedOut: return "已下班"
