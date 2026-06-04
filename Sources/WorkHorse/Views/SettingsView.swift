@@ -105,7 +105,7 @@ struct SettingsView: View {
                             .background(
                                 isSelected
                                     ? AnyShapeStyle(LinearGradient(colors: [.whBlue, .whSky], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    : AnyShapeStyle(Color.white.opacity(0.32))
+                                    : AnyShapeStyle(Color.whControlFill)
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
@@ -127,7 +127,7 @@ struct SettingsView: View {
                     .labelsHidden()
                     .frame(maxWidth: .infinity)
                     .padding(10)
-                    .background(Color.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.whControlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                 Text("—")
                     .font(.system(size: 16, weight: .semibold))
@@ -137,7 +137,7 @@ struct SettingsView: View {
                     .labelsHidden()
                     .frame(maxWidth: .infinity)
                     .padding(10)
-                    .background(Color.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .background(Color.whControlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
         }
         .padding(16)

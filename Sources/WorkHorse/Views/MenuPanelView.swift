@@ -146,11 +146,11 @@ struct MenuPanelView: View {
                     ? [
                         Color.whBlue.opacity(0.14),
                         Color.whSky.opacity(0.10),
-                        Color.white.opacity(0.12)
+                        Color.whControlFill
                     ]
                     : [
-                        Color.white.opacity(0.32),
-                        Color.white.opacity(0.18)
+                        Color.whControlFill,
+                        Color.whControlFill.opacity(0.58)
                     ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -160,7 +160,7 @@ struct MenuPanelView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(
-                    isRunning ? Color.whBlue.opacity(0.30) : Color.white.opacity(0.55),
+                    isRunning ? Color.whBlue.opacity(0.30) : Color.whCardStroke,
                     lineWidth: 1
                 )
         )
@@ -206,7 +206,7 @@ struct MenuPanelView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.whBlue)
                 .frame(width: 28, height: 28)
-                .background(Color.white.opacity(0.55), in: Circle())
+                .background(Color.whControlFillStrong, in: Circle())
                 .overlay(Circle().stroke(Color.whBlue.opacity(0.30), lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -229,7 +229,7 @@ struct MenuPanelView: View {
                 Text(store.isClockedOutToday ? "今日已下班" : "还没有开始计时")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(.whTitle)
-                Text(store.isClockedOutToday ? "去看看今天的成果吧" : "开始一项任务后，我会帮你记住时间")
+                Text(store.isClockedOutToday ? "需要继续处理时，也可以开始新任务" : "开始一项任务后，我会帮你记住时间")
                     .font(.system(size: 13))
                     .foregroundColor(.whMuted)
             }
@@ -245,7 +245,7 @@ struct MenuPanelView: View {
             .disabled(!store.canStartNewTask)
             .opacity(store.canStartNewTask ? 1 : 0.5)
 
-            if !store.canStartNewTask, !store.isClockedOutToday {
+            if !store.canStartNewTask {
                 Text("最多同时追踪 \(WorkHorseStore.maxTrackedTasks) 个任务")
                     .font(.system(size: 11))
                     .foregroundColor(.whMuted)

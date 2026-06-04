@@ -38,7 +38,7 @@ struct TaskPromptView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                            .stroke(Color.whCardStroke, lineWidth: 1)
                     )
                     .focused($isFocused)
                     .onSubmit(start)

@@ -172,7 +172,7 @@ struct ReportView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.30), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color.whControlFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func taskRow(_ task: WorkTask, at referenceDate: Date) -> some View {
@@ -218,7 +218,7 @@ struct ReportView: View {
                 .lineLimit(1)
         }
         .padding(10)
-        .background(Color.white.opacity(0.28), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.whControlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func timeRangeText(for task: WorkTask) -> String {
@@ -275,7 +275,7 @@ private struct DonutChart: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.35), lineWidth: 28)
+                .stroke(Color.whChartTrack, lineWidth: 28)
 
             if total > 0 {
                 ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in

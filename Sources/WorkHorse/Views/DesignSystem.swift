@@ -34,12 +34,44 @@ enum TaskPromptMode {
 }
 
 extension Color {
-    static let whBlue = Color(red: 0.04, green: 0.52, blue: 1.0)
-    static let whSky = Color(red: 0.35, green: 0.78, blue: 0.98)
-    static let whTitle = Color(red: 0.04, green: 0.07, blue: 0.13)
-    static let whBody = Color(red: 0.20, green: 0.25, blue: 0.33)
-    static let whMuted = Color(red: 0.39, green: 0.45, blue: 0.55)
-    static let whLine = Color.white.opacity(0.45)
+    static let whBlue = adaptive(light: srgb(0.04, 0.52, 1.0), dark: srgb(0.24, 0.64, 1.0))
+    static let whSky = adaptive(light: srgb(0.35, 0.78, 0.98), dark: srgb(0.42, 0.82, 1.0))
+    static let whBlueDeep = adaptive(light: srgb(0.02, 0.38, 0.92), dark: srgb(0.08, 0.42, 0.88))
+    static let whTitle = adaptive(light: srgb(0.04, 0.07, 0.13), dark: srgb(0.92, 0.96, 1.0))
+    static let whBody = adaptive(light: srgb(0.20, 0.25, 0.33), dark: srgb(0.76, 0.83, 0.90))
+    static let whMuted = adaptive(light: srgb(0.39, 0.45, 0.55), dark: srgb(0.58, 0.66, 0.76))
+    static let whLine = adaptive(light: srgb(1, 1, 1, 0.45), dark: srgb(1, 1, 1, 0.14))
+    static let whPanelStrokeStrong = adaptive(light: srgb(1, 1, 1, 0.82), dark: srgb(1, 1, 1, 0.18))
+    static let whPanelStroke = adaptive(light: srgb(1, 1, 1, 0.26), dark: srgb(1, 1, 1, 0.08))
+    static let whCardStroke = adaptive(light: srgb(1, 1, 1, 0.54), dark: srgb(1, 1, 1, 0.13))
+    static let whControlFill = adaptive(light: srgb(1, 1, 1, 0.30), dark: srgb(1, 1, 1, 0.07))
+    static let whControlFillStrong = adaptive(light: srgb(1, 1, 1, 0.55), dark: srgb(1, 1, 1, 0.12))
+    static let whChartTrack = adaptive(light: srgb(1, 1, 1, 0.35), dark: srgb(1, 1, 1, 0.10))
+    static let whPanelShadow = adaptive(light: srgb(0, 0, 0, 0.14), dark: srgb(0, 0, 0, 0.46))
+    static let whToastShadow = adaptive(light: srgb(0, 0, 0, 0.12), dark: srgb(0, 0, 0, 0.42))
+
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.isWorkHorseDarkMode ? dark : light
+        })
+    }
+
+    private static func srgb(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, _ alpha: CGFloat = 1) -> NSColor {
+        NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
+    }
+}
+
+private extension NSAppearance {
+    var isWorkHorseDarkMode: Bool {
+        let matches: [NSAppearance.Name] = [
+            .darkAqua,
+            .aqua,
+            .accessibilityHighContrastDarkAqua,
+            .accessibilityHighContrastAqua
+        ]
+        let bestMatch = bestMatch(from: matches)
+        return bestMatch == .darkAqua || bestMatch == .accessibilityHighContrastDarkAqua
+    }
 }
 
 extension View {
@@ -69,7 +101,7 @@ extension View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [.white.opacity(0.82), .white.opacity(0.26)],
+                        colors: [.whPanelStrokeStrong, .whPanelStroke],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
@@ -77,44 +109,59 @@ extension View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .shadow(color: Color.black.opacity(0.14), radius: 32, x: 0, y: 20)
+        .shadow(color: .whPanelShadow, radius: 32, x: 0, y: 20)
     }
 
     func liquidCard(cornerRadius: CGFloat = 20) -> some View {
         background(.thinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.50), lineWidth: 1)
+                    .stroke(Color.whCardStroke, lineWidth: 1)
             )
     }
 }
 
 struct WorkHorseWindowBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
+        let isDark = colorScheme == .dark
         ZStack {
             LinearGradient(
-                colors: [
-                    Color(red: 0.94, green: 0.98, blue: 1.0),
-                    Color(red: 0.86, green: 0.93, blue: 1.0),
-                    Color.white.opacity(0.82)
-                ],
+                colors: isDark ? darkBaseColors : lightBaseColors,
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             RadialGradient(
-                colors: [Color.whSky.opacity(0.28), .clear],
+                colors: [Color.whSky.opacity(isDark ? 0.15 : 0.28), .clear],
                 center: .topTrailing,
                 startRadius: 20,
                 endRadius: 360
             )
             RadialGradient(
-                colors: [Color.whBlue.opacity(0.18), .clear],
+                colors: [Color.whBlue.opacity(isDark ? 0.14 : 0.18), .clear],
                 center: .bottomLeading,
                 startRadius: 20,
                 endRadius: 340
             )
         }
         .ignoresSafeArea()
+    }
+
+    private var lightBaseColors: [Color] {
+        [
+            Color(red: 0.94, green: 0.98, blue: 1.0),
+            Color(red: 0.86, green: 0.93, blue: 1.0),
+            Color.white.opacity(0.82)
+        ]
+    }
+
+    private var darkBaseColors: [Color] {
+        [
+            Color(red: 0.05, green: 0.08, blue: 0.12),
+            Color(red: 0.07, green: 0.11, blue: 0.17),
+            Color(red: 0.03, green: 0.05, blue: 0.08)
+        ]
     }
 }
 
@@ -192,7 +239,7 @@ struct PrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity)
             .background(
                 LinearGradient(
-                    colors: [Color.whBlue, Color(red: 0.02, green: 0.38, blue: 0.92)],
+                    colors: [Color.whBlue, Color.whBlueDeep],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -213,7 +260,7 @@ struct SecondaryButtonStyle: ButtonStyle {
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.58), lineWidth: 1)
+                    .stroke(Color.whCardStroke, lineWidth: 1)
             )
             .opacity(configuration.isPressed ? 0.78 : 1)
     }
@@ -226,7 +273,7 @@ struct IconCircleButtonStyle: ButtonStyle {
             .foregroundColor(.whMuted)
             .frame(width: 30, height: 30)
             .background(.ultraThinMaterial, in: Circle())
-            .overlay(Circle().stroke(Color.white.opacity(0.50), lineWidth: 1))
+            .overlay(Circle().stroke(Color.whCardStroke, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }
@@ -334,7 +381,7 @@ struct ToastBadge: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(Color.white.opacity(0.56), lineWidth: 1))
-            .shadow(color: Color.black.opacity(0.12), radius: 14, y: 8)
+            .overlay(Capsule().stroke(Color.whCardStroke, lineWidth: 1))
+            .shadow(color: .whToastShadow, radius: 14, y: 8)
     }
 }

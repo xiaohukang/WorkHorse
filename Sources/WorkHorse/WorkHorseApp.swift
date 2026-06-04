@@ -994,8 +994,8 @@ private struct LargeToastView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.62), lineWidth: 1)
+                .stroke(Color.whCardStroke, lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.18), radius: 28, x: 0, y: 16)
+        .shadow(color: .whToastShadow, radius: 28, x: 0, y: 16)
     }
 }

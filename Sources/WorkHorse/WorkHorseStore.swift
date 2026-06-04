@@ -42,9 +42,9 @@ final class WorkHorseStore: ObservableObject {
             .sorted { $0.startTime > $1.startTime }
     }
 
-    /// 是否还能再新增任务（未达上限且未下班打卡）。
+    /// 是否还能再新增任务（未达上限；下班后也允许继续记录新任务）。
     var canStartNewTask: Bool {
-        !isClockedOutToday && activeTasks.count < Self.maxTrackedTasks
+        activeTasks.count < Self.maxTrackedTasks
     }
 
     var isClockedOutToday: Bool {
@@ -52,8 +52,8 @@ final class WorkHorseStore: ObservableObject {
     }
 
     var status: WorkHorseStatus {
-        if isClockedOutToday { return .clockedOut }
         if currentTask != nil { return .running }
+        if isClockedOutToday { return .clockedOut }
         return .idle
     }
 
@@ -214,7 +214,8 @@ final class WorkHorseStore: ObservableObject {
         guard settings.isWorkday(segmentStart) else { return 0 }
         let offworkDate = settings.date(on: segmentStart, from: settings.workEndTime)
         guard segmentEnd > offworkDate else { return 0 }
-        return max(0, Int(segmentEnd.timeIntervalSince(offworkDate)))
+        let overtimeStart = max(segmentStart, offworkDate)
+        return max(0, Int(segmentEnd.timeIntervalSince(overtimeStart)))
     }
 
     func totalSeconds(at referenceDate: Date) -> Int {
