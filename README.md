@@ -17,7 +17,37 @@
 - 导出 CSV
 - 本地 JSON 存储
 
-## 运行
+## 安装
+
+### 方式一：npm 全局安装（推荐）
+
+依赖：macOS 13+、Node.js 16.17+。**不需要装 Xcode / Command Line Tools**，`.app` 已经在 npm 包里预编译好。
+
+```bash
+npm install -g workhorse-menu
+workhorse-install
+workhorse
+```
+
+`workhorse-install` 会在 `/Applications`（无写权限时退到 `~/Applications`）创建 `牛马时光.app`，并 `lsregister` 注册到 Launchpad。之后命令行 `workhorse` 直接 `open` 启动。
+
+升级：
+
+```bash
+npm update -g workhorse-menu
+workhorse-install
+```
+
+卸载：
+
+```bash
+npm uninstall -g workhorse-menu
+workhorse uninstall
+```
+
+> `.app` 是在 **CI 流程**里用 Xcode 工具链预编译后打进 npm 包的，本机 install 时只做 `cp + xattr + lsregister`，不触发任何编译。
+
+### 方式二：本地调试运行 / 自行打包
 
 调试运行：
 
@@ -25,7 +55,14 @@
 swift run
 ```
 
-本地打包成 universal `.app`、`.pkg`、`.dmg`、`.zip`：
+只产 `.app`（不走 `.pkg/.dmg/.zip`，给本地调试 / 手动发包用）：
+
+```bash
+./scripts/build-app-bundle.sh
+open dist/牛马时光.app
+```
+
+完整打包（universal `.app`、`.pkg`、`.dmg`、`.zip`）：
 
 ```bash
 ./scripts/package_app.sh

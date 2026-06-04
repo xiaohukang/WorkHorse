@@ -1,8 +1,19 @@
 name: release
 
-# 打 tag 形如 v0.1.0 时自动跑打包脚本，并把 .zip / .dmg 发布为 GitHub Release。
-# 当前是 ad-hoc 签名路线（不做 Developer ID 签名也不做公证）；
-# 拿到 Developer ID 证书后，只需在 workflow 里把 secrets 传给 package_app.sh 即可升级到正式发布。
+# git tag v0.1.0 && git push --tags 触发。
+# 流程：
+#   1) swift build 产 dist/牛马时光.app（不再依赖用户机器装 Xcode CLT）
+#   2) 用 Developer ID 签名 + 公证（如配了 secrets）
+#   3) npm publish（包内带 dist/牛马时光.app）
+#   4) GitHub Release 上传 .zip / .dmg / .pkg
+#
+# 必填 secrets（缺一可降级为 ad-hoc + 不公证）：
+#   NPM_TOKEN              npm automation token
+#   APP_SIGN_IDENTITY      "Developer ID Application: Your Name (TEAMID)"
+#   INSTALLER_SIGN_IDENTITY "Developer ID Installer: Your Name (TEAMID)"
+#   NOTARY_PROFILE         notarytool keychain profile
+# 必填 vars：
+#   APPLE_TEAM_ID          ABCDE12345
 
 on:
   push:
@@ -12,11 +23,19 @@ on:
 
 permissions:
   contents: write
+  id-token: write  # 用于 OIDC，备用
 
 jobs:
   build:
     name: Build & Release
     runs-on: macos-14
+
+    env:
+      VERSION: ${{ github.ref_name }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      APP_SIGN_IDENTITY: ${{ secrets.APP_SIGN_IDENTITY }}
+      INSTALLER_SIGN_IDENTITY: ${{ secrets.INSTALLER_SIGN_IDENTITY }}
+      NOTARY_PROFILE: ${{ secrets.NOTARY_PROFILE }}
 
     steps:
       - name: Checkout
@@ -28,10 +47,20 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Run packaging script (ad-hoc)
-        env:
-          VERSION: ${{ github.ref_name }}
-          BUILD_NUMBER: ${{ github.run_number }}
+      # 1) 预编译 .app（不带签名/公证产物，给 npm 用）
+      - name: Build prebundled .app for npm
+        run: |
+          chmod +x ./scripts/build-app-bundle.sh
+          ./scripts/build-app-bundle.sh
+
+      - name: Verify prebundled .app
+        run: |
+          ls -la dist
+          file "dist/牛马时光.app/Contents/MacOS/WorkHorse"
+          codesign --verify --deep --strict --verbose=2 "dist/牛马时光.app" || true
+
+      # 2) 跑完整打包脚本（产 .pkg/.dmg/.zip + Developer ID 签名 + 公证）
+      - name: Run packaging script
         run: |
           chmod +x ./scripts/package_app.sh
           ./scripts/package_app.sh
@@ -39,9 +68,18 @@ jobs:
       - name: List release artifacts
         run: |
           ls -lh .build
-          file .build/WorkHorse-*.zip
-          file .build/WorkHorse-*.dmg
 
+      # 3) 发到 npm
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm version "v${VERSION#v}" --no-git-tag-version
+          # 只把"发布用的源"加进 tarball：bin / scripts/install / dist / README / package.json
+          npm publish --access public --provenance
+          echo "Published workhorse-menu@$(node -p "require('./package.json').version") to npm"
+
+      # 4) GitHub Release 上传 .zip / .dmg / .pkg
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

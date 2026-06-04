@@ -1,0 +1,44 @@
+{
+  "name": "workhorse-menu",
+  "version": "0.1.1",
+  "description": "牛马时光：macOS 菜单栏常驻工作记录与专注提醒应用，通过 npm 全局安装。",
+  "type": "module",
+  "bin": {
+    "workhorse": "bin/workhorse.mjs",
+    "workhorse-install": "scripts/install-macos-app.mjs"
+  },
+  "files": [
+    "bin/",
+    "scripts/install-macos-app.mjs",
+    "scripts/build-app-bundle.sh",
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node ./bin/workhorse.mjs",
+    "install:mac": "node ./scripts/install-macos-app.mjs",
+    "test": "node --test"
+  },
+  "keywords": [
+    "macos",
+    "menubar",
+    "productivity",
+    "time-tracking",
+    "menu-bar-app"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/xiaohukang/WorkHorse.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xiaohukang/WorkHorse/issues"
+  },
+  "homepage": "https://github.com/xiaohukang/WorkHorse#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=16.17"
+  }
+}

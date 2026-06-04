@@ -1,5 +1,8 @@
 .build/
 .swiftpm/
 DerivedData/
+dist/
+node_modules/
+package-lock.json
 *.xcuserstate
 *.DS_Store
