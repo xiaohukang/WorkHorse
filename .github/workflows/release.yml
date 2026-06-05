@@ -28,7 +28,7 @@ permissions:
 jobs:
   build:
     name: Build & Release
-    runs-on: macos-14
+    runs-on: macos-15
 
     env:
       BUILD_NUMBER: ${{ github.run_number }}
