@@ -173,8 +173,6 @@ write_info_plist() {
   <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSUserNotificationAlertStyle</key>
   <string>alert</string>
 </dict>

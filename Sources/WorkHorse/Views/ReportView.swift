@@ -4,6 +4,12 @@ struct ReportView: View {
     @ObservedObject var store: WorkHorseStore
     let onClose: () -> Void
 
+    /// 报告弹窗的固定宽度；高度由内容自然撑开，超过屏幕可用区的部分
+    /// 由任务明细区自身的 ScrollView 滚动承载，休息记录/图表区按真实高度展示。
+    private static let panelWidth: CGFloat = 720
+    private static let reportBadgeStampSize: CGFloat = 96
+    private static let reportBadgeStampTilt = Angle.degrees(7)
+
     var body: some View {
         TimelineView(.periodic(from: Date(), by: 1)) { context in
             ZStack(alignment: .top) {
@@ -17,6 +23,10 @@ struct ReportView: View {
                     footer
                 }
                 .padding(24)
+                // 关键：只固定宽度，**不写死高度**，让 SwiftUI 按内容算出自然高度。
+                // makeWindow 拿到 NSHostingController.view.fittingSize 后会再把窗口
+                // 尺寸校正到这个高度，从而实现"窗口高度 = 内容高度"。
+                .frame(width: Self.panelWidth, alignment: .top)
 
                 if let toast = store.toast {
                     ToastBadge(message: toast)
@@ -24,7 +34,6 @@ struct ReportView: View {
                         .transition(.opacity)
                 }
             }
-            .frame(width: 720, height: 660)
             .liquidPanel()
         }
     }
@@ -56,21 +65,44 @@ struct ReportView: View {
                 }
                 .layoutPriority(1)
                 Spacer()
+                if store.hasEarnedSuperWorkhorseBadge(at: referenceDate) {
+                    reportBadgeStamp
+                        .padding(.trailing, 10)
+                }
             }
         }
     }
 
     private func overview(at referenceDate: Date) -> some View {
         let overtime = WorkHorseFormatters.durationString(seconds: store.totalOvertimeSeconds(at: referenceDate))
-        return HStack(spacing: 12) {
+        let restSeconds = store.totalRestSeconds(at: referenceDate)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
+        return LazyVGrid(columns: columns, spacing: 12) {
             reportMetric(title: "总工作时长", value: WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)), icon: "timer")
             if store.totalOvertimeSeconds(at: referenceDate) > 0 {
                 reportMetric(title: "加班时长", value: overtime, icon: "moon.zzz.fill", accent: .orange)
             }
-            reportMetric(title: "任务数量", value: "\(store.reportTasks(at: referenceDate).count)个", icon: "list.bullet")
+            if restSeconds > 0 {
+                reportMetric(
+                    title: "休息时长",
+                    value: WorkHorseFormatters.durationString(seconds: restSeconds),
+                    icon: "cup.and.saucer.fill",
+                    accent: .whSky
+                )
+            }
+            reportMetric(title: "任务数量", value: "\(store.reportTaskSummaries(at: referenceDate).count)个", icon: "list.bullet")
             reportMetric(title: "开始时间", value: WorkHorseFormatters.clockTime(store.today.clockInTime), icon: "arrow.up.right.circle")
             reportMetric(title: endTimeTitle(at: referenceDate), value: endTimeValue(at: referenceDate), icon: endTimeIcon)
         }
+    }
+
+    private var reportBadgeStamp: some View {
+        SuperWorkhorseBadgeArtwork()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: Self.reportBadgeStampSize, height: Self.reportBadgeStampSize)
+            .rotationEffect(Self.reportBadgeStampTilt)
+            .shadow(color: Color(red: 1.0, green: 0.62, blue: 0.12).opacity(0.35), radius: 12, x: 0, y: 5)
+            .accessibilityLabel("超级牛马认证")
     }
 
     private func endTimeTitle(at referenceDate: Date) -> String {
@@ -100,35 +132,131 @@ struct ReportView: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.whTitle)
 
-                if store.reportTasks(at: referenceDate).isEmpty {
+                if store.reportTaskSummaries(at: referenceDate).isEmpty {
                     emptyState
                 } else {
                     ScrollView {
                         VStack(spacing: 8) {
-                            ForEach(store.reportTasks(at: referenceDate)) { task in
+                            ForEach(store.reportTaskSummaries(at: referenceDate)) { task in
                                 taskRow(task, at: referenceDate)
                             }
                         }
                     }
+                    // 任务列表做最大高度限制：单日内任务特别多时让 ScrollView 滚动，
+                    // 避免整张报告弹窗被撑得过高（外层 VStack 会按内容自然撑开）。
+                    .frame(maxHeight: 320)
+                }
+
+                if !store.finishedRestSegments.isEmpty || store.isResting {
+                    restSection(at: referenceDate)
                 }
             }
             .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .top)
             .liquidCard()
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("专注时长分布")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.whTitle)
-                DonutChart(tasks: store.reportTasks(at: referenceDate), store: store, referenceDate: referenceDate)
-                    .frame(height: 210)
+                DonutChart(tasks: store.reportTaskSummaries(at: referenceDate))
+                    .frame(height: 180)
                 legend(at: referenceDate)
             }
             .padding(16)
-            .frame(width: 240)
-            .frame(maxHeight: .infinity, alignment: .top)
+            .frame(width: 240, alignment: .top)
             .liquidCard()
         }
+    }
+
+    /// 报告中的休息段清单：每条记录一次休息的开始时间、计划时长、实际时长。
+    /// 把休息从工作明细里抽出来，避免和"专注任务"在视觉上混淆。
+    private func restSection(at referenceDate: Date) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "cup.and.saucer.fill")
+                    .foregroundColor(.whSky)
+                Text("休息记录")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.whTitle)
+                Spacer()
+                Text("共 \(store.totalRestSeconds(at: referenceDate) > 0 ? WorkHorseFormatters.durationString(seconds: store.totalRestSeconds(at: referenceDate)) : "—")")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.whMuted)
+            }
+
+            VStack(spacing: 6) {
+                ForEach(restRowsToShow(at: referenceDate)) { row in
+                    restRow(row)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.whControlFill.opacity(0.7), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private struct RestRow: Identifiable {
+        let id: String
+        let startTime: Date
+        let plannedSeconds: Int
+        let actualSeconds: Int
+        let isOngoing: Bool
+    }
+
+    private func restRowsToShow(at referenceDate: Date) -> [RestRow] {
+        var rows = store.finishedRestSegments.map { segment in
+            RestRow(
+                id: segment.id,
+                startTime: segment.startTime,
+                plannedSeconds: segment.plannedDurationSeconds,
+                actualSeconds: segment.actualDurationSeconds(at: referenceDate),
+                isOngoing: false
+            )
+        }
+        if let ongoing = store.currentRestSegment {
+            rows.append(RestRow(
+                id: ongoing.id,
+                startTime: ongoing.startTime,
+                plannedSeconds: ongoing.plannedDurationSeconds,
+                actualSeconds: ongoing.actualDurationSeconds(at: referenceDate),
+                isOngoing: true
+            ))
+        }
+        return rows
+    }
+
+    private func restRow(_ row: RestRow) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(row.isOngoing ? Color.whSky : Color.whMuted.opacity(0.5))
+                .frame(width: 6, height: 6)
+            Text("\(WorkHorseFormatters.clockTime(row.startTime))")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.whBody)
+                .lineLimit(1)
+            Spacer()
+            Text(plannedVsActualText(row: row))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(row.isOngoing ? .whSky : .whMuted)
+                .lineLimit(1)
+            if row.isOngoing {
+                Text("进行中")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.whSky)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.whSky.opacity(0.14), in: Capsule())
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func plannedVsActualText(row: RestRow) -> String {
+        let planned = WorkHorseFormatters.durationString(seconds: row.plannedSeconds)
+        if row.isOngoing {
+            return "\(WorkHorseFormatters.durationString(seconds: row.actualSeconds))/\(planned)"
+        }
+        return "\(WorkHorseFormatters.durationString(seconds: row.actualSeconds))"
     }
 
     private var footer: some View {
@@ -175,8 +303,8 @@ struct ReportView: View {
         .background(Color.whControlFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private func taskRow(_ task: WorkTask, at referenceDate: Date) -> some View {
-        let overtimeSeconds = store.overtimeSeconds(for: task, at: referenceDate)
+    private func taskRow(_ task: TaskTimeSummary, at referenceDate: Date) -> some View {
+        let overtimeSeconds = task.overtimeSeconds
         return HStack(spacing: 10) {
             Circle()
                 .fill(chartColor(for: task, at: referenceDate))
@@ -187,14 +315,25 @@ struct ReportView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.whTitle)
                         .lineLimit(1)
-                    if !task.status.isFinished {
-                        Text(task.status == .running ? "进行中" : "已暂停")
+                    if task.isOngoing {
+                        Text(task.statusDisplayName)
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(task.status == .running ? .whBlue : .whMuted)
+                            .foregroundColor(task.hasRunningTask ? .whBlue : .whMuted)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
-                                (task.status == .running ? Color.whBlue : Color.whMuted).opacity(0.14),
+                                (task.hasRunningTask ? Color.whBlue : Color.whMuted).opacity(0.14),
+                                in: Capsule()
+                            )
+                    }
+                    if task.taskCount > 1 {
+                        Text("合并 \(task.taskCount) 次")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.whBlue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Color.whBlue.opacity(0.12),
                                 in: Capsule()
                             )
                     }
@@ -212,7 +351,7 @@ struct ReportView: View {
                     .foregroundColor(.whMuted)
             }
             Spacer()
-            Text(WorkHorseFormatters.durationString(seconds: store.duration(for: task, at: referenceDate)))
+            Text(WorkHorseFormatters.durationString(seconds: task.durationSeconds))
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.whBody)
                 .lineLimit(1)
@@ -221,12 +360,15 @@ struct ReportView: View {
         .background(Color.whControlFill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func timeRangeText(for task: WorkTask) -> String {
-        let start = WorkHorseFormatters.clockTime(task.startTime)
-        if let end = task.endTime {
+    private func timeRangeText(for task: TaskTimeSummary) -> String {
+        let start = WorkHorseFormatters.clockTime(task.firstStartTime)
+        if task.isOngoing {
+            return "\(start) - 计时中"
+        }
+        if let end = task.lastEndTime {
             return "\(start) - \(WorkHorseFormatters.clockTime(end))"
         }
-        return "\(start) - 计时中"
+        return "\(start) - --:--"
     }
 
     private var emptyState: some View {
@@ -243,7 +385,7 @@ struct ReportView: View {
 
     private func legend(at referenceDate: Date) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(store.reportTasks(at: referenceDate).prefix(5).enumerated()), id: \.element.id) { _, task in
+            ForEach(Array(store.reportTaskSummaries(at: referenceDate).prefix(5).enumerated()), id: \.element.id) { _, task in
                 HStack(spacing: 7) {
                     Circle()
                         .fill(chartColor(for: task, at: referenceDate))
@@ -258,17 +400,15 @@ struct ReportView: View {
         }
     }
 
-    private func chartColor(for task: WorkTask, at referenceDate: Date) -> Color {
+    private func chartColor(for task: TaskTimeSummary, at referenceDate: Date) -> Color {
         let colors: [Color] = [.whBlue, .whSky, .green, .orange, .pink, .purple, .teal]
-        guard let index = store.reportTasks(at: referenceDate).firstIndex(where: { $0.id == task.id }) else { return .whBlue }
+        guard let index = store.reportTaskSummaries(at: referenceDate).firstIndex(where: { $0.id == task.id }) else { return .whBlue }
         return colors[index % colors.count]
     }
 }
 
 private struct DonutChart: View {
-    let tasks: [WorkTask]
-    @ObservedObject var store: WorkHorseStore
-    let referenceDate: Date
+    let tasks: [TaskTimeSummary]
 
     private let colors: [Color] = [.whBlue, .whSky, .green, .orange, .pink, .purple, .teal]
 
@@ -290,7 +430,7 @@ private struct DonutChart: View {
                 Text("总计")
                     .font(.system(size: 12))
                     .foregroundColor(.whMuted)
-                Text(WorkHorseFormatters.durationString(seconds: store.totalSeconds(at: referenceDate)))
+                Text(WorkHorseFormatters.durationString(seconds: total))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.whTitle)
                     .lineLimit(1)
@@ -304,18 +444,18 @@ private struct DonutChart: View {
     }
 
     private var total: Int {
-        max(0, tasks.reduce(0) { $0 + store.duration(for: $1, at: referenceDate) })
+        max(0, tasks.reduce(0) { $0 + $1.durationSeconds })
     }
 
     private func startFraction(for index: Int) -> CGFloat {
         guard total > 0 else { return 0 }
-        let previous = tasks.prefix(index).reduce(0) { $0 + store.duration(for: $1, at: referenceDate) }
+        let previous = tasks.prefix(index).reduce(0) { $0 + $1.durationSeconds }
         return CGFloat(Double(previous) / Double(total))
     }
 
     private func endFraction(for index: Int) -> CGFloat {
         guard total > 0 else { return 0 }
-        let through = tasks.prefix(index + 1).reduce(0) { $0 + store.duration(for: $1, at: referenceDate) }
+        let through = tasks.prefix(index + 1).reduce(0) { $0 + $1.durationSeconds }
         return CGFloat(Double(through) / Double(total))
     }
 }

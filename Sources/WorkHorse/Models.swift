@@ -167,14 +167,113 @@ struct WorkTask: Identifiable, Codable, Equatable {
     }
 }
 
+struct TaskTimeSummary: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var firstStartTime: Date
+    var lastEndTime: Date?
+    var durationSeconds: Int
+    var overtimeSeconds: Int
+    var taskCount: Int
+    var hasRunningTask: Bool
+    var hasPausedTask: Bool
+    var latestStatus: TaskStatus
+    var latestUpdatedAt: Date
+
+    var isOngoing: Bool {
+        hasRunningTask || hasPausedTask
+    }
+
+    var statusDisplayName: String {
+        if hasRunningTask { return TaskStatus.running.displayName }
+        if hasPausedTask { return TaskStatus.paused.displayName }
+        return latestStatus.displayName
+    }
+}
+
+/// 一次休息记录：用户主动进入休息状态时由 Store 记录。
+/// 进入休息时若当前有运行中的任务，会先暂停任务；休息结束（达到预计结束时间或用户主动恢复）后，
+/// 任务的累计时长不会把休息段算进去。
+struct RestSegment: Identifiable, Codable, Equatable {
+    var id: String
+    var startTime: Date
+    var plannedDurationSeconds: Int
+    var endTime: Date?
+
+    init(
+        id: String = UUID().uuidString,
+        startTime: Date,
+        plannedDurationSeconds: Int,
+        endTime: Date? = nil
+    ) {
+        self.id = id
+        self.startTime = startTime
+        self.plannedDurationSeconds = max(0, plannedDurationSeconds)
+        self.endTime = endTime
+    }
+
+    /// 实际休息秒数。仍在进行中时按"现在 - 开始时间"计算。
+    func actualDurationSeconds(at referenceDate: Date) -> Int {
+        let end = endTime ?? referenceDate
+        return max(0, Int(end.timeIntervalSince(startTime)))
+    }
+}
+
 struct DailyLog: Codable, Equatable {
     var date: String
     var clockInTime: Date?
     var clockOutTime: Date?
     var tasks: [WorkTask]
+    var restSegments: [RestSegment]
 
     static func empty(for date: String) -> DailyLog {
-        DailyLog(date: date, clockInTime: nil, clockOutTime: nil, tasks: [])
+        DailyLog(date: date, clockInTime: nil, clockOutTime: nil, tasks: [], restSegments: [])
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case date, clockInTime, clockOutTime, tasks, restSegments
+    }
+
+    init(date: String, clockInTime: Date?, clockOutTime: Date?, tasks: [WorkTask], restSegments: [RestSegment] = []) {
+        self.date = date
+        self.clockInTime = clockInTime
+        self.clockOutTime = clockOutTime
+        self.tasks = tasks
+        self.restSegments = restSegments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        date = try container.decode(String.self, forKey: .date)
+        clockInTime = try container.decodeIfPresent(Date.self, forKey: .clockInTime)
+        clockOutTime = try container.decodeIfPresent(Date.self, forKey: .clockOutTime)
+        tasks = try container.decodeIfPresent([WorkTask].self, forKey: .tasks) ?? []
+        restSegments = try container.decodeIfPresent([RestSegment].self, forKey: .restSegments) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(date, forKey: .date)
+        try container.encodeIfPresent(clockInTime, forKey: .clockInTime)
+        try container.encodeIfPresent(clockOutTime, forKey: .clockOutTime)
+        try container.encode(tasks, forKey: .tasks)
+        try container.encode(restSegments, forKey: .restSegments)
+    }
+}
+
+struct DailyWorkSummary: Identifiable, Equatable {
+    var id: String { date }
+
+    var date: String
+    var clockInTime: Date?
+    var clockOutTime: Date?
+    var taskSummaries: [TaskTimeSummary]
+    var totalSeconds: Int
+    var overtimeSeconds: Int
+    var restSeconds: Int
+
+    var taskCount: Int {
+        taskSummaries.count
     }
 }
 

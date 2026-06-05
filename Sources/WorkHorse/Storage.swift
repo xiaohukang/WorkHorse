@@ -53,6 +53,24 @@ final class JSONStorage {
         return log
     }
 
+    func loadAllDailyLogs() -> [DailyLog] {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: tasksDirectoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return urls
+            .filter { $0.pathExtension == "json" }
+            .compactMap { url -> DailyLog? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return try? decoder.decode(DailyLog.self, from: data)
+            }
+            .sorted { $0.date > $1.date }
+    }
+
     func saveDailyLog(_ log: DailyLog) {
         try? FileManager.default.createDirectory(at: tasksDirectoryURL, withIntermediateDirectories: true)
         guard let data = try? encoder.encode(log) else { return }

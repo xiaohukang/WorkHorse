@@ -51,6 +51,7 @@ else
   swift build -c release "${arch_args[@]}"
   BUILD_PRODUCTS_DIR="$BUILD_DIR/apple/Products/Release"
 fi
+BUILD_PRODUCTS_DIR="$(cd "$BUILD_PRODUCTS_DIR" && pwd -P)"
 
 EXECUTABLE="$BUILD_PRODUCTS_DIR/WorkHorse"
 if [[ ! -f "$EXECUTABLE" ]]; then
@@ -124,8 +125,6 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSUserNotificationAlertStyle</key>
   <string>alert</string>
 </dict>

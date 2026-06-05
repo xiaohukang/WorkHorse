@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 
@@ -15,6 +16,13 @@ final class ReminderSoundPlayer {
     private let engine = AVAudioEngine()
     private let sampleRate: Double = 44_100
     private let synth: FocusSynth
+    private let moanResourceName = "horse-moan"
+    private let badgeEarnedResourceName = "badge-earned"
+    private let taskPauseResourceName = "task-pause"
+    private let taskCompleteResourceName = "task-complete"
+    private let taskStartResourceName = "task-start"
+    private let audioResourceExtensions = ["mp3", "wav"]
+    private var resourceSounds: [String: NSSound] = [:]
 
     private init() {
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
@@ -31,6 +39,55 @@ final class ReminderSoundPlayer {
     /// 播放专注提醒的"叮咚"提示音。如果引擎未启动会先启动，每次播放都会重新生成样本。
     func play() {
         synth.resetForNewPlayback()
+        startEngineIfNeeded()
+    }
+
+    /// 播放"牛马哀嚎"音效，作为专注提醒中用户点击"继续"按钮后的吐槽式反馈。
+    ///
+    /// 实现说明：原本想复用共享的 `AVAudioEngine` + `AVAudioPlayerNode`，
+    /// 但实测在 11.025 kHz / MPEG-2.5 Layer III 这种非主流 MP3 上，
+    /// `AVAudioFile.read` 可能抛出 `kAudioFileUnsupportedFileTypeError`，
+    /// 而更关键的是：与 `FocusSynth` 共享同一个 `AVAudioEngine` 时，
+    /// 在 `play()` 之后引擎会进入"全部采样渲染完→输出静音"状态，
+    /// 后续 `moanPlayer.scheduleBuffer` 排进队列但引擎不主动 wake，导致无声。
+    /// 改用 `NSSound`（走系统音频服务）独立播放，问题全消失。
+    ///
+    /// 资源文件：Sources/WorkHorse/Resources/horse-moan.mp3，
+    /// 经 Package.swift 的 `.process("Resources")` 自动拷贝进 Bundle.module。
+    /// 找不到资源或解码失败时静默回退 —— 弹窗行为本身不应被音效问题阻塞。
+    func playMoan() {
+        playBundledSound(resourceName: moanResourceName, debugLabel: "哀嚎")
+    }
+
+    /// 播放超级牛马勋章获得音效。
+    ///
+    /// 资源文件：Sources/WorkHorse/Resources/badge-earned.mp3。
+    func playBadgeEarned() {
+        playBundledSound(resourceName: badgeEarnedResourceName, debugLabel: "勋章获得")
+    }
+
+    /// 播放任务列表点击暂停后的反馈音效。
+    ///
+    /// 资源文件：Sources/WorkHorse/Resources/task-pause.mp3。
+    func playTaskPaused() {
+        playBundledSound(resourceName: taskPauseResourceName, debugLabel: "任务暂停")
+    }
+
+    /// 播放任务列表点击完成后的反馈音效。
+    ///
+    /// 资源文件：Sources/WorkHorse/Resources/task-complete.mp3。
+    func playTaskCompleted() {
+        playBundledSound(resourceName: taskCompleteResourceName, debugLabel: "任务完成")
+    }
+
+    /// 播放任务列表点击开始后的反馈音效。
+    ///
+    /// 资源文件：Sources/WorkHorse/Resources/task-start.mp3。
+    func playTaskStarted() {
+        playBundledSound(resourceName: taskStartResourceName, debugLabel: "任务开始")
+    }
+
+    private func startEngineIfNeeded() {
         do {
             if !engine.isRunning {
                 try engine.start()
@@ -41,6 +98,55 @@ final class ReminderSoundPlayer {
             print("ReminderSoundPlayer: 启动音频引擎失败 -> \(error)")
             #endif
         }
+    }
+
+    /// 按优先级在 Bundle.module、Bundle.main、用户提供的源码相对路径里找资源。
+    /// 拷贝到 Sources/WorkHorse/Resources 后 .process 会把它打进 Bundle.module，
+    /// 找不到时回退到源码目录方便本地 swift run 调试。
+    private func playBundledSound(resourceName: String, debugLabel: String) {
+        guard let sound = loadBundledSound(resourceName: resourceName, debugLabel: debugLabel) else { return }
+        sound.stop()
+        sound.currentTime = 0
+        sound.volume = 1.0
+        sound.play()
+    }
+
+    // NSSound 在主线程同步构造 + play() 异步返回，不会阻塞 UI。
+    // 缓存 NSSound 实例，避免本地变量释放后音频播放被系统提前终止。
+    private func loadBundledSound(resourceName: String, debugLabel: String) -> NSSound? {
+        if let sound = resourceSounds[resourceName] {
+            return sound
+        }
+
+        guard let url = locateAudioResourceURL(resourceName: resourceName) else {
+            #if DEBUG
+            let names = audioResourceExtensions.map { "\(resourceName).\($0)" }.joined(separator: " / ")
+            print("ReminderSoundPlayer: 找不到\(debugLabel)音频资源 \(names)")
+            #endif
+            return nil
+        }
+
+        guard let sound = NSSound(contentsOf: url, byReference: true) else {
+            #if DEBUG
+            print("ReminderSoundPlayer: NSSound 加载\(debugLabel)音频失败 -> \(url.path)")
+            #endif
+            return nil
+        }
+
+        resourceSounds[resourceName] = sound
+        return sound
+    }
+
+    private func locateAudioResourceURL(resourceName: String) -> URL? {
+        let candidates = audioResourceExtensions.flatMap { fileExtension in
+            [
+                Bundle.module.url(forResource: resourceName, withExtension: fileExtension),
+                Bundle.main.url(forResource: resourceName, withExtension: fileExtension),
+                Bundle.main.resourceURL?.appendingPathComponent("\(resourceName).\(fileExtension)"),
+                URL(fileURLWithPath: "/Users/hukang/Documents/Work Horse/Sources/WorkHorse/Resources/\(resourceName).\(fileExtension)")
+            ]
+        }
+        return candidates.compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 }
 

@@ -13,7 +13,9 @@ enum WorkHorseMain {
         let appDelegate = AppDelegate()
         delegate = appDelegate
         app.delegate = appDelegate
-        app.setActivationPolicy(.accessory)
+        // 走 .regular 而非 .accessory：让 WorkHorse 出现在 ⌘Tab 任务切换器中，
+        // 避免窗口被其他 App 遮挡后"找不到界面"。状态栏图标在 .regular 下仍正常工作。
+        app.setActivationPolicy(.regular)
         app.run()
     }
 }
@@ -31,21 +33,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private var offworkReminderWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var reportWindow: NSWindow?
+    private var historyWindow: NSWindow?
+    private var restPickerWindow: NSWindow?
+    private var superBadgeWindow: NSWindow?
     private var toastWindow: NSWindow?
     private var toastDismissWorkItem: DispatchWorkItem?
     private let focusReminderPopover = NSPopover()
     private var focusReminderDismissWorkItem: DispatchWorkItem?
+    private var runningTaskActivity: NSObjectProtocol?
+    private var superBadgeTriggerWorkItem: DispatchWorkItem?
 
     private var nextStartPromptAt: Date = .distantPast
     private var nextFocusReminderAt: Date?
     private var nextOffworkReminderAt: Date?
+    /// 最近一次被 `showXxxWindow` 打开过的窗口 key（settings/report/taskPrompt/offworkReminder/restPicker），
+    /// 用于 ⌘Tab 切回 WorkHorse 时按"上次打开过哪个窗口就恢复哪个"恢复界面。
+    private var lastOpenedWindowKey: String?
+    /// 启动后首次 activation 不算"用户从 ⌘Tab 切回来"，避免与 0.35s 后的 onboarding 弹窗重复打开。
+    private var hasHandledFirstActivation = false
     private var lastRenderedStatus: WorkHorseStatus?
     private var lastRenderedStatusBarTitle: String?
+    private var lastRenderedIsResting: Bool = false
     private let startPromptPostponeInterval: TimeInterval = 10 * 60
     private let menuPopoverWidth: CGFloat = 340
+    /// 弹窗高度的兜底值。默认 0 表示不强制撑高，让弹窗完全跟随内部 SwiftUI
+    /// 内容自适应；外部需要时仍然可以通过 `MenuPanelView.minContentHeight`
+    /// 显式传入一个最小高度。
+    private let menuPopoverMinHeight: CGFloat = 0
+    /// 当前弹窗的 contentSize 高度缓存，用于在 SwiftUI 反复上报同一高度时
+    /// 跳过无意义的 `popover.contentSize` 写入。每次关闭弹窗后重置。
+    private var menuPopoverCurrentHeight: CGFloat = 0
     private let statusBarFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
     private let statusBarIconLength: CGFloat = 18
     private let statusBarHorizontalPadding: CGFloat = 12
+    private let superBadgeCelebrationDefaultsKey = "superWorkhorseBadgeCelebratedDate"
 
     private lazy var statusBarIcon: NSImage = {
         if let url = statusBarIconURL(),
@@ -59,6 +80,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         return fallback
     }()
 
+    /// 状态栏在休息中显示的图标：与"牛马需要休息"按钮的 `cup.and.saucer.fill` 保持一致。
+    /// 渲染成 18×18 的 template image，遵循 macOS 状态栏的暗色自适应规则。
+    private lazy var statusBarRestIcon: NSImage = {
+        let image = NSImage(systemSymbolName: "cup.and.saucer.fill", accessibilityDescription: "休息中") ?? NSImage()
+        let target = NSImage(size: NSSize(width: 18, height: 18))
+        target.lockFocus()
+        image.draw(
+            in: NSRect(origin: .zero, size: NSSize(width: 18, height: 18)),
+            from: NSRect(origin: .zero, size: image.size),
+            operation: .sourceOver,
+            fraction: 1
+        )
+        target.unlockFocus()
+        target.isTemplate = true
+        target.cacheMode = .never
+        target.setName(NSImage.Name("statusbar-rest-iconTemplate"))
+        return target
+    }()
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMainMenu()
         if isRunningAsAppBundle {
@@ -69,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         configureTimers()
         configureStoreObservation()
         resetReminderSchedules()
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
         postponeStartPrompt()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
@@ -83,6 +124,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         focusReminderPopover.performClose(nil)
         toastDismissWorkItem?.cancel()
         toastWindow?.close()
+        superBadgeWindow?.close()
+        superBadgeTriggerWorkItem?.cancel()
+        if let runningTaskActivity {
+            ProcessInfo.processInfo.endActivity(runningTaskActivity)
+            self.runningTaskActivity = nil
+        }
+    }
+
+    /// ⌘Tab 切到 WorkHorse 时按"上次打开过哪个窗口就恢复哪个"恢复界面；
+    /// 若从未打开过窗口，则兜底弹主菜单弹窗（和点状态栏图标一样），保证"找得到界面"。
+    /// 启动后第一次 activation 不触发，避免与 applicationDidFinishLaunching 中
+    /// 0.35s 后的 onboarding 设置弹窗重复打开。
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard hasHandledFirstActivation else {
+            hasHandledFirstActivation = true
+            return
+        }
+        guard superBadgeWindow == nil else { return }
+        restoreLastOpenedWindowOrShowMenu()
+    }
+
+    /// 用户点 Dock 图标（或者在 App 列表里再次点击 App）时，也走"恢复最近窗口"逻辑。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        restoreLastOpenedWindowOrShowMenu()
+        return true
+    }
+
+    /// 关掉所有窗口后不要退出：用户可能只是临时关掉弹窗，工作仍然在状态栏常驻；
+    /// 这样也避免在 ⌘Tab 切换过程中出现"窗口被全关 → App 退出 → 切不到"的尴尬。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    private func restoreLastOpenedWindowOrShowMenu() {
+        NSApp.activate(ignoringOtherApps: true)
+        // 1) 有未关闭的窗口：直接置前。
+        if let key = lastOpenedWindowKey,
+           let window = windowForKey(key),
+           window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        // 2) 有过窗口但被关掉了：重新打开。
+        if let key = lastOpenedWindowKey {
+            openWindow(forKey: key)
+            return
+        }
+        // 3) 从没主动开过窗口：兜底弹主菜单弹窗。
+        togglePopover()
+    }
+
+    private func windowForKey(_ key: String) -> NSWindow? {
+        switch key {
+        case "taskPrompt": return taskPromptWindow
+        case "offworkReminder": return offworkReminderWindow
+        case "settings": return settingsWindow
+        case "report": return reportWindow
+        case "history": return historyWindow
+        case "restPicker": return restPickerWindow
+        default: return nil
+        }
+    }
+
+    private func openWindow(forKey key: String) {
+        switch key {
+        case "taskPrompt": showTaskPrompt(mode: .start)
+        case "offworkReminder": showOffworkReminder()
+        case "settings": showSettingsWindow(isOnboarding: false)
+        case "report": showReportWindow()
+        case "history": showHistoryWindow()
+        case "restPicker": showRestPickerWindow()
+        default: togglePopover()
+        }
     }
 
     @objc private func togglePopover() {
@@ -116,7 +230,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private func configurePopover() {
         popover.behavior = .transient
         popover.delegate = self
-        popover.animates = true
+        // 主菜单内容会随任务增减实时变高/变矮；关闭 popover 自带的尺寸动画，
+        // 避免缩高时 AppKit 保留旧 view 偏移，导致顶部内容被裁切。
+        popover.animates = false
+
+        menuPopoverCurrentHeight = 0
 
         let rootView = MenuPanelView(
             store: store,
@@ -125,33 +243,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                 showTaskPrompt: { [weak self] in self?.showTaskPrompt(mode: .start) },
                 completeTask: { [weak self] in self?.completeTaskFromMenu() },
                 showReport: { [weak self] in self?.showReportWindow() },
+                showHistory: { [weak self] in self?.showHistoryWindow() },
                 quit: { NSApp.terminate(nil) },
                 resumeTask: { [weak self] id in self?.handleResumeTask(id: id) },
                 pauseCurrentTask: { [weak self] in self?.handlePauseCurrentTask() },
-                completeTaskByID: { [weak self] id in self?.handleCompleteTaskByID(id: id) }
+                completeTaskByID: { [weak self] id in self?.handleCompleteTaskByID(id: id) },
+                requestRest: { [weak self] in self?.showRestPickerWindow() },
+                startRest: { [weak self] minutes in self?.handleStartRest(minutes: minutes) },
+                endRest: { [weak self] in self?.handleEndRest() }
             ),
+            minContentHeight: menuPopoverMinHeight,
             onContentHeightChange: { [weak self] height in
                 self?.updateMenuPopoverHeight(height)
             }
         )
         let hostingController = NSHostingController(rootView: rootView)
         let fittingHeight = ceil(hostingController.view.fittingSize.height)
-        let contentSize = NSSize(width: menuPopoverWidth, height: fittingHeight > 0 ? fittingHeight : 1)
-        popover.contentSize = contentSize
-        hostingController.preferredContentSize = contentSize
+        let initialHeight = max(menuPopoverMinHeight, fittingHeight > 0 ? fittingHeight : 1)
+        menuPopoverCurrentHeight = initialHeight
+        let contentSize = NSSize(width: menuPopoverWidth, height: initialHeight)
         popover.contentViewController = hostingController
+        applyMenuPopoverSize(contentSize)
     }
 
     private func updateMenuPopoverHeight(_ height: CGFloat) {
         let nextHeight = ceil(height)
-        guard nextHeight > 0,
-              abs(popover.contentSize.height - nextHeight) > 0.5 else {
-            return
-        }
+        guard nextHeight > 0 else { return }
 
-        let nextSize = NSSize(width: menuPopoverWidth, height: nextHeight)
-        popover.contentSize = nextSize
-        popover.contentViewController?.preferredContentSize = nextSize
+        // 弹窗高度完全跟随 SwiftUI 内容自适应：
+        // 内容变长就变长，内容变短就同步缩回，不会留下多余的空白。
+        let displayHeight = max(menuPopoverMinHeight, nextHeight)
+        guard abs(menuPopoverCurrentHeight - displayHeight) > 0.5 else { return }
+
+        menuPopoverCurrentHeight = displayHeight
+        let nextSize = NSSize(width: menuPopoverWidth, height: displayHeight)
+        applyMenuPopoverSize(nextSize)
+    }
+
+    private func applyMenuPopoverSize(_ size: NSSize) {
+        popover.contentViewController?.preferredContentSize = size
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            popover.contentSize = size
+        }
     }
 
     private func configureMainMenu() {
@@ -296,6 +432,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             postponeFocusReminder()
         }
 
+        if let closedPopover = notification.object as? NSPopover, closedPopover === popover {
+            // 主菜单弹窗关闭后重置当前高度缓存，下次打开从内容 fit 重新计算，
+            // 避免上一次会话的高度被带到下一次。
+            menuPopoverCurrentHeight = 0
+        }
+
         stopPopoverOutsideClickMonitoring()
     }
 
@@ -316,6 +458,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     private func tick() {
         store.tick()
+        syncRunningTaskRuntimeState()
         updateStatusItem()
         guard store.settings.hasCompletedOnboarding else { return }
 
@@ -326,10 +469,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         }
 
         maybeShowOffworkReminder()
+        maybeShowSuperWorkhorseBadgeCelebration()
     }
 
     private func handleResumeTask(id: String) {
         guard store.resumeTask(id: id) else { return }
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
+        ReminderSoundPlayer.shared.playTaskStarted()
         if let task = store.currentTask {
             showToast("「\(task.title)」正在计时")
         }
@@ -338,12 +484,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     private func handlePauseCurrentTask() {
         guard store.pauseRunningTask() else { return }
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
+        ReminderSoundPlayer.shared.playTaskPaused()
         showToast("当前任务已暂停")
         nextFocusReminderAt = nil
     }
 
     private func handleCompleteTaskByID(id: String) {
         guard let task = store.completeTask(id: id) else { return }
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
+        ReminderSoundPlayer.shared.playTaskCompleted()
         showToast("「\(task.title)」已完成")
         nextFocusReminderAt = nil
     }
@@ -351,14 +501,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private func updateStatusItem(force: Bool = false) {
         let status = store.status
         let title = statusBarTitle(for: status)
-        guard force || status != lastRenderedStatus || title != lastRenderedStatusBarTitle else { return }
+        let isResting = store.isResting
+        guard force || status != lastRenderedStatus
+                || title != lastRenderedStatusBarTitle
+                || isResting != lastRenderedIsResting else {
+            return
+        }
 
         lastRenderedStatus = status
         lastRenderedStatusBarTitle = title
+        lastRenderedIsResting = isResting
 
         if let button = statusItem?.button {
             statusItem?.length = statusBarItemLength(for: title)
-            button.image = statusBarIcon
+            // 休息中切换为咖啡杯图标，与"牛马需要休息"按钮的视觉保持一致。
+            button.image = isResting ? statusBarRestIcon : statusBarIcon
             button.imagePosition = .imageLeft
             button.imageHugsTitle = true
             button.alignment = .center
@@ -374,6 +531,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     }
 
     private func statusBarTitle(for status: WorkHorseStatus) -> String {
+        if let segment = store.currentRestSegment {
+            let remaining = segment.plannedDurationSeconds - segment.actualDurationSeconds(at: Date())
+            return " \(statusBarTimerString(seconds: remaining))"
+        }
         guard status == .running, let task = store.currentTask else { return "" }
         return " \(statusBarTimerString(seconds: store.duration(for: task, at: Date())))"
     }
@@ -465,6 +626,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         showOffworkReminder()
     }
 
+    private func syncRunningTaskRuntimeState(rescheduleBadge: Bool = false) {
+        if store.currentTask != nil {
+            if runningTaskActivity == nil {
+                runningTaskActivity = ProcessInfo.processInfo.beginActivity(
+                    options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+                    reason: "WorkHorse is tracking an active task"
+                )
+            }
+            if rescheduleBadge {
+                scheduleSuperBadgeTriggerIfNeeded()
+            }
+        } else {
+            if let runningTaskActivity {
+                ProcessInfo.processInfo.endActivity(runningTaskActivity)
+                self.runningTaskActivity = nil
+            }
+            cancelScheduledSuperBadgeTrigger()
+        }
+    }
+
+    private func scheduleSuperBadgeTriggerIfNeeded() {
+        cancelScheduledSuperBadgeTrigger()
+
+        guard store.settings.hasCompletedOnboarding,
+              store.currentTask != nil else {
+            return
+        }
+
+        let referenceDate = Date()
+        let dateKey = WorkHorseFormatters.dateKey(for: referenceDate)
+        guard UserDefaults.standard.string(forKey: superBadgeCelebrationDefaultsKey) != dateKey else {
+            return
+        }
+
+        let remaining = store.remainingSecondsForSuperWorkhorseBadge(at: referenceDate)
+        guard remaining > 0 else {
+            maybeShowSuperWorkhorseBadgeCelebration()
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.store.tick()
+            self.updateStatusItem(force: true)
+            self.maybeShowSuperWorkhorseBadgeCelebration()
+        }
+        superBadgeTriggerWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + TimeInterval(remaining), execute: workItem)
+    }
+
+    private func cancelScheduledSuperBadgeTrigger() {
+        superBadgeTriggerWorkItem?.cancel()
+        superBadgeTriggerWorkItem = nil
+    }
+
     private func latestInputIdleSeconds() -> TimeInterval {
         let eventTypes: [CGEventType] = [.keyDown, .mouseMoved, .leftMouseDown, .rightMouseDown, .scrollWheel]
         return eventTypes
@@ -547,6 +763,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private func showTaskPrompt(mode: TaskPromptMode) {
         closePopover()
         closeWindow(key: "taskPrompt")
+        lastOpenedWindowKey = "taskPrompt"
         let window = makeWindow(
             key: "taskPrompt",
             title: mode.title,
@@ -558,6 +775,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                     guard let self else { return }
                     let started = self.store.startTask(title: title)
                     if started {
+                        self.syncRunningTaskRuntimeState(rescheduleBadge: true)
                         self.nextFocusReminderAt = Date().addingTimeInterval(TimeInterval(max(1, self.store.settings.focusReminderInterval) * 60))
                         self.closeWindow(key: "taskPrompt")
                         self.showToast("开始计时，可在状态栏查看时长")
@@ -583,7 +801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             return
         }
 
-        let size = NSSize(width: 340, height: 280)
+        let size = NSSize(width: 340, height: 320)
         focusReminderPopover.behavior = .transient
         focusReminderPopover.delegate = self
         focusReminderPopover.animates = true
@@ -595,12 +813,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                 onComplete: { [weak self] in
                     self?.closeFocusReminderPopover()
                     self?.store.completeCurrentTask(status: .completed)
+                    self?.syncRunningTaskRuntimeState(rescheduleBadge: true)
                     self?.nextFocusReminderAt = nil
                     self?.showTaskPrompt(mode: .next)
                 },
                 onContinue: { [weak self] in
+                    // 用户选择"继续"：先把弹窗关掉、把下次提醒时间推后，让视觉反馈立刻生效；
+                    // 哀嚎音效放在最后且是 fire-and-forget，即便加载/播放失败也不影响主流程。
                     self?.postponeFocusReminder()
                     self?.closeFocusReminderPopover()
+                    ReminderSoundPlayer.shared.playMoan()
+                },
+                onRest: { [weak self] in
+                    // 休息 5 分钟：复用 Store 的休息流程，休息结束会自动恢复任务。
+                    self?.closeFocusReminderPopover()
+                    self?.handleStartRest(minutes: 5)
                 }
             )
         )
@@ -638,6 +865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private func showOffworkReminder() {
         closePopover()
         closeWindow(key: "offworkReminder")
+        lastOpenedWindowKey = "offworkReminder"
         let window = makeWindow(
             key: "offworkReminder",
             title: "到点下班啦",
@@ -646,6 +874,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             rootView: OffworkReminderView(
                 onClockOut: { [weak self] in
                     self?.store.clockOutToday()
+                    self?.syncRunningTaskRuntimeState(rescheduleBadge: true)
                     self?.nextFocusReminderAt = nil
                     self?.nextOffworkReminderAt = nil
                     self?.closeWindow(key: "offworkReminder")
@@ -667,6 +896,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             presentWindow(settingsWindow)
             return
         }
+        lastOpenedWindowKey = "settings"
 
         let window = makeWindow(
             key: "settings",
@@ -684,6 +914,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
                         self.store.saveSettings(settings)
                     }
                     self.resetReminderSchedules(afterSettingsChange: true)
+                    self.syncRunningTaskRuntimeState(rescheduleBadge: true)
                     self.finishSettingsFlow(promptsForTask: promptsForTaskOnDismiss)
                 },
                 onCancel: { [weak self] in
@@ -722,32 +953,234 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         }
     }
 
+    // MARK: - 休息流程
+
+    /// 弹出"牛马需要休息"选择窗口；用户选择具体分钟数（2~20）后开始休息。
+    private func showRestPickerWindow() {
+        closePopover()
+        closeWindow(key: "restPicker")
+        if store.isResting {
+            showToast("已经在休息中")
+            return
+        }
+        lastOpenedWindowKey = "restPicker"
+
+        let window = makeWindow(
+            key: "restPicker",
+            title: "牛马需要休息",
+            size: NSSize(width: 420, height: 420),
+            level: .floating,
+            rootView: RestPickerView(
+                onPick: { [weak self] minutes in
+                    self?.handleStartRest(minutes: minutes)
+                },
+                onCancel: { [weak self] in
+                    self?.closeWindow(key: "restPicker")
+                }
+            ),
+            preferredHeight: 420
+        )
+        restPickerWindow = window
+    }
+
+    private func handleStartRest(minutes: Int) {
+        let bounded = max(2, min(20, minutes))
+        guard let segment = store.startRest(minutes: bounded) else {
+            closeWindow(key: "restPicker")
+            return
+        }
+        closeWindow(key: "restPicker")
+        // 休息中不要再触发专注提醒，否则会反复打扰正在放空的牛马。
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
+        nextFocusReminderAt = nil
+        showToast("开始休息 \(bounded) 分钟")
+        scheduleRestAutoResume(for: segment, fallbackMinutes: bounded)
+    }
+
+    /// 休息时长到达后自动结束休息并恢复任务；
+    /// 与 OffworkReminder 类似的 fire-and-forget 计时器，不需要暴露给外部。
+    private var restAutoResumeWorkItem: DispatchWorkItem?
+    private var restAutoResumeTargetID: String?
+
+    private func scheduleRestAutoResume(for segment: RestSegment, fallbackMinutes: Int) {
+        restAutoResumeWorkItem?.cancel()
+        let target = segment.id
+        restAutoResumeTargetID = target
+
+        let seconds = max(1, segment.plannedDurationSeconds)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.restAutoResumeTargetID == target,
+                  let current = self.store.currentRestSegment,
+                  current.id == target else {
+                return
+            }
+            self.handleEndRest()
+        }
+        restAutoResumeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + TimeInterval(seconds),
+            execute: workItem
+        )
+        _ = fallbackMinutes
+    }
+
+    private func handleEndRest() {
+        restAutoResumeWorkItem?.cancel()
+        restAutoResumeWorkItem = nil
+        restAutoResumeTargetID = nil
+        guard store.isResting else { return }
+
+        let resumed = store.endCurrentRestIfNeeded(at: Date())
+        if resumed != nil {
+            syncRunningTaskRuntimeState(rescheduleBadge: true)
+            showToast("休息结束，继续干活")
+            // 任务恢复后，按用户配置的专注提醒间隔再推迟一次提醒。
+            nextFocusReminderAt = Date().addingTimeInterval(TimeInterval(max(1, store.settings.focusReminderInterval) * 60))
+        } else {
+            syncRunningTaskRuntimeState(rescheduleBadge: true)
+            showToast("休息结束")
+        }
+    }
+
     private func showReportWindow() {
         closePopover()
         if let reportWindow {
             presentWindow(reportWindow)
             return
         }
+        lastOpenedWindowKey = "report"
 
         let window = makeWindow(
             key: "report",
             title: "今日工作报告",
-            size: NSSize(width: 720, height: 660),
+            size: NSSize(width: 720, height: 760),
             level: .floating,
             rootView: ReportView(
                 store: store,
                 onClose: { [weak self] in
                     self?.closeWindow(key: "report")
                 }
-            )
+            ),
+            // preferredHeight > 0 触发 makeWindow 内的"按 SwiftUI 内容自适应窗口高度"逻辑，
+            // 这样今日任务少时窗口不会留一大块空白，任务多时也不会写死 760 溢出。
+            preferredHeight: 1
         )
         reportWindow = window
+    }
+
+    private func showHistoryWindow() {
+        closePopover()
+        if let historyWindow {
+            presentWindow(historyWindow)
+            return
+        }
+        lastOpenedWindowKey = "history"
+
+        let window = makeWindow(
+            key: "history",
+            title: "历史工作记录",
+            size: NSSize(width: 760, height: 760),
+            level: .floating,
+            rootView: HistoryView(
+                store: store,
+                onClose: { [weak self] in
+                    self?.closeWindow(key: "history")
+                }
+            ),
+            preferredHeight: 1
+        )
+        historyWindow = window
+    }
+
+    private func maybeShowSuperWorkhorseBadgeCelebration() {
+        let referenceDate = Date()
+        guard store.settings.hasCompletedOnboarding,
+              store.hasEarnedSuperWorkhorseBadge(at: referenceDate),
+              superBadgeWindow == nil else {
+            return
+        }
+
+        let dateKey = WorkHorseFormatters.dateKey(for: referenceDate)
+        guard UserDefaults.standard.string(forKey: superBadgeCelebrationDefaultsKey) != dateKey else {
+            return
+        }
+
+        if showSuperWorkhorseBadgeWindow(totalSeconds: store.totalSeconds(at: referenceDate)) {
+            UserDefaults.standard.set(dateKey, forKey: superBadgeCelebrationDefaultsKey)
+        }
+    }
+
+    @discardableResult
+    private func showSuperWorkhorseBadgeWindow(totalSeconds: Int) -> Bool {
+        closePopover()
+        superBadgeWindow?.close()
+
+        guard let screen = screenContainingMouse()
+            ?? NSApp.keyWindow?.screen
+            ?? statusItem?.button?.window?.screen
+            ?? NSScreen.main
+            ?? NSScreen.screens.first else {
+            return false
+        }
+
+        let window = WorkHorseOverlayPanel(
+            contentRect: screen.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.identifier = NSUserInterfaceItemIdentifier("superBadge")
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        window.isReleasedWhenClosed = false
+        window.contentViewController = NSHostingController(
+            rootView: SuperWorkhorseBadgeCelebrationView(
+                totalSeconds: totalSeconds,
+                onDismiss: { [weak self] in
+                    self?.closeSuperWorkhorseBadgeWindow()
+                }
+            )
+            .frame(width: screen.frame.width, height: screen.frame.height)
+        )
+        window.setFrame(screen.frame, display: true)
+        superBadgeWindow = window
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.alphaValue = 1
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self, weak window] in
+            guard let self,
+                  let window,
+                  self.superBadgeWindow === window else {
+                return
+            }
+            ReminderSoundPlayer.shared.playBadgeEarned()
+        }
+        return true
+    }
+
+    private func closeSuperWorkhorseBadgeWindow() {
+        guard let window = superBadgeWindow else { return }
+        superBadgeWindow = nil
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.24
+            window.animator().alphaValue = 0
+        } completionHandler: {
+            window.close()
+        }
     }
 
     private func completeTaskFromMenu() {
         guard store.currentTask != nil else { return }
         closeFocusReminderPopover()
         store.completeCurrentTask(status: .completed)
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
         nextFocusReminderAt = nil
         showTaskPrompt(mode: .next)
     }
@@ -757,10 +1190,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         title: String,
         size: NSSize,
         level: NSWindow.Level,
-        rootView: Content
+        rootView: Content,
+        preferredHeight: CGFloat? = nil
     ) -> NSWindow {
+        // 如果调用方传了 preferredHeight（比如想要"高度自适应"的弹窗），
+        // 用 NSHostingController 测出 SwiftUI 内容的 fittingSize，再把窗口尺寸校正到该高度；
+        // 这样内容自然撑开多少，窗口就多高，不会出现截图中"高度写死但内容溢出/留白"的问题。
+        let resolvedSize: NSSize = {
+            guard let preferredHeight, preferredHeight > 0 else { return size }
+            return NSSize(width: size.width, height: preferredHeight)
+        }()
+
         let window = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: NSRect(origin: .zero, size: resolvedSize),
             // 不使用 .nonactivatingPanel：之前它导致面板永远成不了 keyWindow，
             // 进而 NSApp.keyWindow?.miniaturize / zoom / performClose 全部失效。
             // 当前设置下 makeKey() 能把面板置为 keyWindow，配合 WindowControlButton
@@ -787,17 +1229,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         window.isReleasedWhenClosed = false
         // 背景与圆角由 SwiftUI 的 .liquidPanel() 渲染；不要给 contentView 套自定义 layer，
         // 否则会多出一层背景并遮挡 SwiftUI 的阴影。
-        window.contentViewController = NSHostingController(rootView: rootView)
-        window.setContentSize(size)
+        let hostingController = NSHostingController(rootView: rootView)
+        window.contentViewController = hostingController
+        window.setContentSize(resolvedSize)
         NSApp.activate(ignoringOtherApps: true)
         centerWindow(window)
         window.makeKeyAndOrderFront(nil)
         // 显式 makeKey()：避免 accessory app 中面板不会自动成为 keyWindow。
         window.makeKey()
         window.orderFrontRegardless()
-        DispatchQueue.main.async { [weak self, weak window] in
-            guard let window else { return }
-            self?.centerWindow(window)
+
+        // 自适应高度：layoutIfNeeded 后 SwiftUI 会按内容算出真实高度，
+        // 此时再把窗口 contentSize 调整一次，确保不同文案长度下都不会溢出/留白。
+        if preferredHeight != nil {
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let window else { return }
+                hostingController.view.layoutSubtreeIfNeeded()
+                let fittingHeight = ceil(hostingController.view.fittingSize.height)
+                guard fittingHeight > 0 else {
+                    self?.centerWindow(window)
+                    return
+                }
+                // 防止内容特别多时把窗口撑出屏幕：以窗口所在屏幕可见高度的 90% 为上限。
+                let maxAllowedHeight = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+                let clampedHeight = min(fittingHeight, maxAllowedHeight * 0.9)
+                if abs(window.contentRect(forFrameRect: window.frame).height - clampedHeight) > 0.5 {
+                    window.setContentSize(NSSize(width: resolvedSize.width, height: clampedHeight))
+                }
+                self?.centerWindow(window)
+            }
+        } else {
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let window else { return }
+                self?.centerWindow(window)
+            }
         }
         return window
     }
@@ -933,6 +1398,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         case "report":
             reportWindow?.close()
             reportWindow = nil
+        case "history":
+            historyWindow?.close()
+            historyWindow = nil
+        case "restPicker":
+            restPickerWindow?.close()
+            restPickerWindow = nil
+        case "superBadge":
+            closeSuperWorkhorseBadgeWindow()
         default:
             break
         }
@@ -961,10 +1434,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             settingsWindow = nil
         case "report":
             reportWindow = nil
+        case "history":
+            historyWindow = nil
+        case "restPicker":
+            // 用户关闭选择器时不取消已经启动的休息；只清空窗口引用。
+            restPickerWindow = nil
+        case "superBadge":
+            superBadgeWindow = nil
         default:
             break
         }
     }
+}
+
+private final class WorkHorseOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 }
 
 private struct LargeToastView: View {

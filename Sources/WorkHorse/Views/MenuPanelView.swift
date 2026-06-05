@@ -3,6 +3,10 @@ import SwiftUI
 struct MenuPanelView: View {
     @ObservedObject var store: WorkHorseStore
     let actions: WorkHorseActions
+    /// 弹窗内容最低高度。默认 0：让弹窗高度完全跟随内部内容自适应。
+    /// 当外部显式传入一个大于 0 的值时，内容不足该高度会固定贴顶，
+    /// 把空白留在底部而不是把上方元素往上挤。
+    var minContentHeight: CGFloat = 0
     var onContentHeightChange: ((CGFloat) -> Void)?
 
     var body: some View {
@@ -15,11 +19,12 @@ struct MenuPanelView: View {
         }
         .padding(18)
         .frame(width: 340)
+        .overlay(contentHeightReader)
+        .frame(minHeight: minContentHeight, alignment: .top)
         .fixedSize(horizontal: false, vertical: true)
         .background(WorkHorseWindowBackground())
-        .background(contentHeightReader)
         .onPreferenceChange(MenuPanelHeightPreferenceKey.self) { height in
-            onContentHeightChange?(height)
+            onContentHeightChange?(max(minContentHeight, height))
         }
     }
 
@@ -46,6 +51,12 @@ struct MenuPanelView: View {
             }
             .layoutPriority(1)
             Spacer()
+            Button(action: actions.showHistory) {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .buttonStyle(IconCircleButtonStyle())
+            .help("历史记录")
+
             Button(action: actions.showSettings) {
                 Image(systemName: "gearshape")
             }
@@ -252,11 +263,48 @@ struct MenuPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Button(action: actions.showReport) {
-                Label("今日报告", systemImage: "chart.pie")
+            secondaryActionsRow
+        }
+    }
+
+    /// 「牛马需要休息」和「今日报告」并排成一行，样式与「今日报告」保持一致。
+    private var secondaryActionsRow: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                if store.isResting, let segment = store.currentRestSegment {
+                    restStatusButton(segment: segment)
+                } else {
+                    Button(action: actions.requestRest) {
+                        Label("牛马需要休息", systemImage: "cup.and.saucer.fill")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+
+                Button(action: actions.showReport) {
+                    Label("今日报告", systemImage: "chart.pie")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+
+        }
+    }
+
+    /// 休息进行中时，把左侧按钮替换成"结束休息 + 倒计时"，
+    /// 文案明确告诉用户点击会结束休息，同时显示剩余时间。
+    private func restStatusButton(segment: RestSegment) -> some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            let remaining = max(0, segment.plannedDurationSeconds - segment.actualDurationSeconds(at: context.date))
+            Button(action: actions.endRest) {
+                HStack(spacing: 6) {
+                    Image(systemName: "stop.circle.fill")
+                    Text("结束休息")
+                    Text(WorkHorseFormatters.timerString(seconds: remaining))
+                        .monospacedDigit()
+                        .foregroundColor(.whBlue)
+                }
             }
             .buttonStyle(SecondaryButtonStyle())
-            .frame(maxWidth: .infinity)
+            .help("点击立即结束休息")
         }
     }
 
