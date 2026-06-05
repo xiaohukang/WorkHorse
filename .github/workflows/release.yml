@@ -31,7 +31,6 @@ jobs:
     runs-on: macos-14
 
     env:
-      VERSION: ${{ github.ref_name }}
       BUILD_NUMBER: ${{ github.run_number }}
       APP_SIGN_IDENTITY: ${{ secrets.APP_SIGN_IDENTITY }}
       INSTALLER_SIGN_IDENTITY: ${{ secrets.INSTALLER_SIGN_IDENTITY }}
@@ -40,6 +39,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve release version
+        run: |
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(node -p "require('./package.json').version")"
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
+          echo "Release version: $VERSION"
 
       - name: Show Swift toolchain
         run: |
@@ -74,7 +85,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm version "v${VERSION#v}" --no-git-tag-version
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+          if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "$PACKAGE_NAME@$VERSION already exists on npm; skipping publish."
+            exit 0
+          fi
+
           # 只把"发布用的源"加进 tarball：bin / scripts/install / dist / README / package.json
           npm publish --access public --provenance
           echo "Published workhorse-menu@$(node -p "require('./package.json').version") to npm"
@@ -83,7 +101,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           files: |
             .build/WorkHorse-*.zip
