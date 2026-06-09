@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/preview.png" alt="牛马时光 WorkHorse" />
+</p>
+
 # 牛马时光 WorkHorse
 
 牛马时光是一款 macOS 菜单栏常驻工作记录应用。它用于记录当前任务、统计今日工作时长、提供专注提醒，并在下班后生成今日工作报告。
