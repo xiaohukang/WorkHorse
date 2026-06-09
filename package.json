@@ -1,6 +1,6 @@
 {
   "name": "workhorse-menu",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "牛马时光：macOS 菜单栏常驻工作记录与专注提醒应用，通过 npm 全局安装。",
   "type": "module",
   "bin": {
