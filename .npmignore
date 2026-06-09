@@ -1,9 +1,0 @@
-.build/
-.swiftpm/
-DerivedData/
-node_modules/
-.github/
-.git/
-.gitignore
-*.md
-!README.md

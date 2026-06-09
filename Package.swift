@@ -17,6 +17,11 @@ let package = Package(
             resources: [
                 .process("Resources")
             ]
+        ),
+        .testTarget(
+            name: "WorkHorseTests",
+            dependencies: ["WorkHorse"],
+            path: "Tests/WorkHorseTests"
         )
     ],
     swiftLanguageVersions: [.v5]

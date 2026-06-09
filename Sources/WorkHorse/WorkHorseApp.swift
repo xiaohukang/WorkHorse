@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private var focusReminderDismissWorkItem: DispatchWorkItem?
     private var runningTaskActivity: NSObjectProtocol?
     private var superBadgeTriggerWorkItem: DispatchWorkItem?
+    private var superBadgePresentationConfirmationWorkItem: DispatchWorkItem?
+    private var superBadgeCelebrationDateKey: String?
+    private var isScreenAwake = true
+    private var isUserSessionActive = true
 
     private var nextStartPromptAt: Date = .distantPast
     private var nextFocusReminderAt: Date?
@@ -108,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         configurePopover()
         configureTimers()
         configureStoreObservation()
+        configureWorkspaceObservation()
         resetReminderSchedules()
         syncRunningTaskRuntimeState(rescheduleBadge: true)
         postponeStartPrompt()
@@ -126,6 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         toastWindow?.close()
         superBadgeWindow?.close()
         superBadgeTriggerWorkItem?.cancel()
+        superBadgePresentationConfirmationWorkItem?.cancel()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         if let runningTaskActivity {
             ProcessInfo.processInfo.endActivity(runningTaskActivity)
             self.runningTaskActivity = nil
@@ -141,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             hasHandledFirstActivation = true
             return
         }
+        store.tick()
+        discardStaleSuperBadgeCelebrationIfNeeded()
+        maybeShowSuperWorkhorseBadgeCelebration()
         guard superBadgeWindow == nil else { return }
         restoreLastOpenedWindowOrShowMenu()
     }
@@ -456,8 +466,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         }
     }
 
+    private func configureWorkspaceObservation() {
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(
+            self,
+            selector: #selector(handleScreenDidSleep),
+            name: NSWorkspace.screensDidSleepNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleScreenDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleSessionDidResignActive),
+            name: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(handleSessionDidBecomeActive),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleScreenDidSleep(_ notification: Notification) {
+        isScreenAwake = false
+        suspendSuperBadgeCelebrationPresentation()
+    }
+
+    @objc private func handleScreenDidWake(_ notification: Notification) {
+        isScreenAwake = true
+        resumeSuperBadgeCelebrationPresentationIfPossible()
+    }
+
+    @objc private func handleSessionDidResignActive(_ notification: Notification) {
+        isUserSessionActive = false
+        suspendSuperBadgeCelebrationPresentation()
+    }
+
+    @objc private func handleSessionDidBecomeActive(_ notification: Notification) {
+        isUserSessionActive = true
+        resumeSuperBadgeCelebrationPresentationIfPossible()
+    }
+
     private func tick() {
         store.tick()
+        discardStaleSuperBadgeCelebrationIfNeeded()
         syncRunningTaskRuntimeState()
         updateStatusItem()
         guard store.settings.hasCompletedOnboarding else { return }
@@ -1095,24 +1154,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
 
     private func maybeShowSuperWorkhorseBadgeCelebration() {
         let referenceDate = Date()
-        guard store.settings.hasCompletedOnboarding,
-              store.hasEarnedSuperWorkhorseBadge(at: referenceDate),
-              superBadgeWindow == nil else {
-            return
-        }
-
         let dateKey = WorkHorseFormatters.dateKey(for: referenceDate)
-        guard UserDefaults.standard.string(forKey: superBadgeCelebrationDefaultsKey) != dateKey else {
+        let shouldPresent = SuperBadgeCelebrationPolicy.shouldPresent(
+            hasCompletedOnboarding: store.settings.hasCompletedOnboarding,
+            hasEarnedBadge: store.hasEarnedSuperWorkhorseBadge(at: referenceDate),
+            hasOpenWindow: superBadgeWindow != nil,
+            isPresentationAvailable: canPresentSuperBadgeCelebration,
+            celebratedDateKey: UserDefaults.standard.string(forKey: superBadgeCelebrationDefaultsKey),
+            currentDateKey: dateKey
+        )
+        guard shouldPresent else {
             return
         }
 
-        if showSuperWorkhorseBadgeWindow(totalSeconds: store.totalSeconds(at: referenceDate)) {
-            UserDefaults.standard.set(dateKey, forKey: superBadgeCelebrationDefaultsKey)
-        }
+        showSuperWorkhorseBadgeWindow(
+            totalSeconds: store.totalSeconds(at: referenceDate),
+            dateKey: dateKey
+        )
     }
 
-    @discardableResult
-    private func showSuperWorkhorseBadgeWindow(totalSeconds: Int) -> Bool {
+    private var canPresentSuperBadgeCelebration: Bool {
+        isScreenAwake && isUserSessionActive
+    }
+
+    private func showSuperWorkhorseBadgeWindow(totalSeconds: Int, dateKey: String) {
+        guard canPresentSuperBadgeCelebration else { return }
+
         closePopover()
         superBadgeWindow?.close()
 
@@ -1121,7 +1188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             ?? statusItem?.button?.window?.screen
             ?? NSScreen.main
             ?? NSScreen.screens.first else {
-            return false
+            return
         }
 
         let window = WorkHorseOverlayPanel(
@@ -1148,26 +1215,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
         )
         window.setFrame(screen.frame, display: true)
         superBadgeWindow = window
+        superBadgeCelebrationDateKey = dateKey
 
         NSApp.activate(ignoringOtherApps: true)
         window.alphaValue = 1
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self, weak window] in
+        superBadgePresentationConfirmationWorkItem?.cancel()
+        let confirmation = DispatchWorkItem { [weak self, weak window] in
             guard let self,
                   let window,
-                  self.superBadgeWindow === window else {
+                  self.superBadgeWindow === window,
+                  self.superBadgeCelebrationDateKey == dateKey else {
                 return
             }
+            self.superBadgePresentationConfirmationWorkItem = nil
+
+            guard self.canPresentSuperBadgeCelebration,
+                  window.isVisible,
+                  window.occlusionState.contains(.visible) else {
+                self.closeSuperWorkhorseBadgeWindow()
+                return
+            }
+
+            UserDefaults.standard.set(dateKey, forKey: self.superBadgeCelebrationDefaultsKey)
             ReminderSoundPlayer.shared.playBadgeEarned()
         }
-        return true
+        superBadgePresentationConfirmationWorkItem = confirmation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: confirmation)
     }
 
-    private func closeSuperWorkhorseBadgeWindow() {
+    private func suspendSuperBadgeCelebrationPresentation() {
+        superBadgePresentationConfirmationWorkItem?.cancel()
+        superBadgePresentationConfirmationWorkItem = nil
+        closeSuperWorkhorseBadgeWindow(animated: false)
+    }
+
+    private func resumeSuperBadgeCelebrationPresentationIfPossible() {
+        guard canPresentSuperBadgeCelebration else { return }
+        store.tick()
+        discardStaleSuperBadgeCelebrationIfNeeded()
+        syncRunningTaskRuntimeState(rescheduleBadge: true)
+        maybeShowSuperWorkhorseBadgeCelebration()
+    }
+
+    private func discardStaleSuperBadgeCelebrationIfNeeded() {
+        let currentDateKey = WorkHorseFormatters.dateKey()
+        guard SuperBadgeCelebrationPolicy.shouldCloseOpenCelebration(
+            celebrationDateKey: superBadgeCelebrationDateKey,
+            currentDateKey: currentDateKey
+        ) else {
+            return
+        }
+        closeSuperWorkhorseBadgeWindow(animated: false)
+    }
+
+    private func closeSuperWorkhorseBadgeWindow(animated: Bool = true) {
+        superBadgePresentationConfirmationWorkItem?.cancel()
+        superBadgePresentationConfirmationWorkItem = nil
+        superBadgeCelebrationDateKey = nil
         guard let window = superBadgeWindow else { return }
         superBadgeWindow = nil
+        guard animated else {
+            window.close()
+            return
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.24
             window.animator().alphaValue = 0
